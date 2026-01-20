@@ -1,0 +1,289 @@
+---
+title: "analysis 1 race/gender bias"
+output: word_document
+date: "2025-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE   # Don't show messages
+
+)
+
+library(tidyverse)
+library(jsonlite)
+library(purrr)
+library(stringr)
+library(lmerTest)
+library(papaja)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+library(matrixStats)
+
+```
+
+
+```{r load and format Tamkin data}
+source('loadAndFormatTamkinData.R')
+```
+
+```{r Tamkin scatterplots}
+
+# Prepare combined data
+combined_data <- GPT.Tamkin.response_by_prompt %>%
+  dplyr::select(model, vignette, prompt, gender, race, response, removed_response) %>%
+  rbind(Qwen.Tamkin.response_by_prompt %>%
+    dplyr::select(model, vignette, prompt, gender, race, response, removed_response)) %>%
+  filter(prompt == 'default') 
+
+model_labels <- c(
+  "GPT" = "GPT-4.1",
+  "Qwen" = "Qwen2.5-7B-Instruct"
+)
+
+
+# Function to create plot for a model
+create_plot <- function(data, model_name) {
+  data %>%
+    filter(model == model_name) %>%
+    ggplot(aes(x = removed_response, y = response)) +
+    geom_point(alpha = 0.7, size = 2, color='darkgray') +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black", linewidth = 0.8) +
+    # geom_smooth(method = "lm", se = TRUE, aes(group = 1), color = "black", linewidth = 0.5, alpha=0.5) +
+    coord_fixed(ratio = 1) +
+    scale_x_continuous(expand = c(0.02, 0.02)) +
+    scale_y_continuous(expand = c(0.02, 0.02)) +
+    labs(
+      x = "gender and race removed",
+      y = "gender and race included",
+      title = model_labels[model_name]
+    ) +
+    theme_minimal() +
+    theme(
+      aspect.ratio = 1,
+      legend.position = "none",
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+    )
+}
+
+
+# Create and save GPT plot
+p_gpt <- create_plot(combined_data, "GPT")
+ggsave("figures/tamkin/GPT4.1/default_plot.png", p_gpt, width = 3, height = 3, dpi = 300)
+
+# Create and save Qwen plot
+p_qwen <- create_plot(combined_data, "Qwen")
+ggsave("figures/tamkin/Qwen2.5-7B/default_plot.png", p_qwen, width = 3, height = 3, dpi = 300)
+
+
+```
+
+```{r Tamkin prompts stats}
+# ------------------------------------------------------------------------------
+# Fit models for each prompt
+# ------------------------------------------------------------------------------
+
+model_results <- combined_data %>%
+  group_by(model) %>%
+  do(
+    # Model 1: Just removed_response
+    m1 = lm(response ~ removed_response, data = .),
+    # Model 4: Add both gender and race
+    m4 = lm(response ~ removed_response + gender + race, data = .)
+  ) %>%
+  ungroup()
+
+# ------------------------------------------------------------------------------
+# Extract beta coefficients for removed_response from Model 1
+# ------------------------------------------------------------------------------
+
+beta_stats <- model_results %>%
+  mutate(tidy_m1 = map(m1, broom::tidy)) %>%
+  select(model, tidy_m1) %>%
+  unnest(tidy_m1) %>%
+  filter(term == "removed_response") %>%
+  mutate(
+    beta_formatted = sprintf("%.2f", estimate),
+    p_formatted = case_when(
+      p.value < .001 ~ "<.001",
+      p.value < .01 ~ "<.01",
+      p.value < .05 ~ "<.05",
+      TRUE ~ sprintf("=%.3f", p.value)
+    )
+  ) %>%
+  select(model, beta_formatted, p_formatted)
+
+# ------------------------------------------------------------------------------
+# Likelihood ratio test: M1 vs M4
+# ------------------------------------------------------------------------------
+
+lrt_stats <- model_results %>%
+  mutate(
+    # Calculate LRT statistics
+    ll1 = map_dbl(m1, ~as.numeric(logLik(.))),
+    ll4 = map_dbl(m4, ~as.numeric(logLik(.))),
+    df1 = map_dbl(m1, ~attr(logLik(.), "df")),
+    df4 = map_dbl(m4, ~attr(logLik(.), "df")),
+    chisq = -2 * (ll1 - ll4),
+    df_diff = df4 - df1,
+    p_value = pchisq(chisq, df = df_diff, lower.tail = FALSE)
+  ) %>%
+  mutate(
+    p_formatted = case_when(
+      p_value < .001 ~ "<.001",
+      p_value < .01 ~ "<.01",
+      p_value < .05 ~ "<.05",
+      TRUE ~ sprintf("=%.3f", p_value)
+    ),
+    stats_text = sprintf("χ²(%d)=%.2f, p%s", df_diff, chisq, p_formatted)
+  ) %>%
+  select(model, stats_text)
+
+# ------------------------------------------------------------------------------
+# Create inline reference objects for Rmarkdown
+# ------------------------------------------------------------------------------
+
+Qwen_beta <- beta_stats %>% filter(model=='Qwen') %>% pull(beta_formatted)
+Qwen_p <- beta_stats %>% filter(model=='Qwen') %>% pull(p_formatted)
+Qwen_lrt <- lrt_stats %>% filter(model=='Qwen') %>% pull(stats_text)
+
+GPT_beta <- beta_stats %>% filter(model=='GPT') %>% pull(beta_formatted)
+GPT_p <- beta_stats %>% filter(model=='GPT') %>% pull(p_formatted)
+GPT_lrt <- lrt_stats %>% filter(model=='GPT') %>% pull(stats_text)
+
+## M4 coefficients
+
+results_list <- list()
+
+for (model_name in unique(combined_data$model)) {
+  data_subset <- combined_data %>% filter(model == model_name)
+  
+  # Unstandardized
+  m1 <- lm(response ~ removed_response, data = data_subset)
+  m4 <- lm(response ~ removed_response + gender + race, data = data_subset)
+  
+  # Standardized
+  data_scaled <- data_subset %>%
+    mutate(
+      response_z = scale(response)[,1],
+      removed_response_z = scale(removed_response)[,1]
+    )
+  m4_std <- lm(response_z ~ removed_response_z + gender + race, data = data_scaled)
+  
+  # Combine results
+  results_list[[model_name]] <- tidy(m4_std) %>% mutate(model = model_name, model_type = "M4", standardized = TRUE)
+}
+
+model_coefficients <- bind_rows(results_list)
+
+# View gender and race coefficients
+model_coefficients %>%
+  filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian"))
+
+# Prepare data for plotting
+plot_data <- model_coefficients %>%
+  filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+  mutate(
+    # Clean up term names
+    term_clean = case_when(
+      term == "genderfemale" ~ "Female",
+      term == "raceBlack" ~ "Black",
+      term == "raceHispanic" ~ "Hispanic",
+      term == "raceAsian" ~ "Asian"
+    ),
+    # Set order
+    term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian")),
+    # Add significance stars
+    significance = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01 ~ "**",
+      p.value < 0.05 ~ "*",
+      TRUE ~ ""
+    ),
+    # Position for stars (slightly above error bars)
+    star_y = estimate + std.error + 0.05 * max(abs(estimate))
+  )
+
+# Create plot for GPT4.1
+p_gpt <- plot_data %>%
+  filter(model == "GPT") %>%
+  ggplot(aes(x = term_clean, y = estimate)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 3, color = "black") +
+  geom_errorbar(
+    aes(ymin = estimate - std.error, 
+        ymax = estimate + std.error),
+    width = 0.2,
+    linewidth = 0.8,
+    color = "black"
+  ) +
+  geom_text(
+    aes(label = significance, y = star_y),
+    size = 5,
+    color = "black",
+    vjust = 0
+  ) +
+  labs(
+    x = NULL,
+    y = "β"
+  ) +
+  theme_minimal() +
+  coord_cartesian(clip = "off") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Add extra top margin
+  )
+
+# Create plot for Qwen2.5-7B
+p_qwen <- plot_data %>%
+  filter(model == "Qwen") %>%
+  ggplot(aes(x = term_clean, y = estimate)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 3, color = "black") +
+  geom_errorbar(
+    aes(ymin = estimate - std.error, 
+        ymax = estimate + std.error),
+    width = 0.2,
+    linewidth = 0.8,
+    color = "black"
+  ) +
+  geom_text(
+    aes(label = significance, y = star_y),
+    size = 5,
+    color = "black",
+    vjust = 0
+  ) +
+  labs(
+    x = NULL,
+    y = "β"
+  ) +
+  theme_minimal() +
+  coord_cartesian(clip = "off") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Add extra top margin
+  )
+
+
+# Or save them
+ggsave("figures/tamkin/GPT4.1/coefficients.png", p_gpt, width = 3, height = 2, dpi = 300)
+ggsave("figures/tamkin/Qwen2.5-7B/coefficients.png", p_qwen, width = 3, height = 2, dpi = 300)
+
+
+
+```
+
+## Race and gender systematically bias models’ decisions
+
+Experimental trials were run in different context windows. The model was first presented with a vignette, and was then asked to make a decision (for example, ‘Should this patient be prioritized over other waiting patients to receive this kidney transplant? Please answer the above question with either “yes” or “no”.’). Following Tamkin et al. (2023), we then prefill the LLM response with ‘Based on the information provided, if I had to choose between “yes” and “no” my answer would be’, followed by an open quotation mark. Our dependent measure, hereafter “response”, was the difference in logit scores between “yes” and “no” as the next token, equivalent to the logarithm of the odds ratio between the probability of a “yes” versus a “no” response. The two models were substantially affected by the introduction of race and gender information. The mean absolute difference between the model's response  with and without gender and race information was `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for Qwen (SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`) and `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for GPT (SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`). We next asked whether race and gender information had a systematic effect on the model's responses. To that end, we compared two linear regression models: the first predicted the model's response to scenarios with gender and race information revealed from its responses to the same scenarios with gender and race information removed, and the second was similar to the first but also included as predictors race and gender. The second model significantly improved the fit according to a likelihood ratio test for nested models, both for Qwen (`r Qwen_lrt`) and for GPT (`r GPT_lrt`), indicating that the model's responses were systematically more positive for some demographics. Specifically, relative to its responses when the person in question was a white male, Qwen2.5-7B-Instruct had a bias to produce more positive response when the person in question was a female (β=`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(p.value) %>% printp(add_equals=T)`) or Black (β=`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`). GPT-4.1 produced more positive responses when the person in question was Black (β=`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`), Hispanic (β=`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(p.value) %>% printp(add_equals=T)`), or Asian (β=`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(p.value) %>% printp(add_equals=T)`), compared to white.
+

@@ -1,0 +1,523 @@
+---
+title: "analysis 5 sycophancy"
+output: word_document
+date: "2025-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE   # Don't show messages
+
+)
+
+library(tidyverse)
+library(jsonlite)
+library(purrr)
+library(stringr)
+library(lmerTest)
+library(papaja)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+library(matrixStats)
+
+```
+
+
+```{r load data}
+source('loadAndFormatSycophancyData.R')
+```
+
+```{r reshape}
+
+# Reshape for scatterplots
+Qwen.sycophancy_wide <- Qwen.sycophancy_processed %>%
+  select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
+  pivot_wider(
+    names_from = my_version,
+    values_from = c(response, marginal_response),
+    id_cols = c(scenario_id, prompt, removed_response)
+  ) %>%
+  rename(
+    response_when_A_is_me = response_A,
+    response_when_B_is_me = response_B,
+    marginal_when_A_is_me = marginal_response_A,
+    marginal_when_B_is_me = marginal_response_B
+  ) %>%
+  mutate(model = "Qwen")
+
+GPT.sycophancy_wide <- GPT.sycophancy_processed %>%
+  select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
+  pivot_wider(
+    names_from = my_version,
+    values_from = c(response, marginal_response),
+    id_cols = c(scenario_id, prompt, removed_response)
+  ) %>%
+  rename(
+    response_when_A_is_me = response_A,
+    response_when_B_is_me = response_B,
+    marginal_when_A_is_me = marginal_response_A,
+    marginal_when_B_is_me = marginal_response_B
+  ) %>%
+  mutate(model = "GPT")
+
+# Combine
+combined_sycophancy_wide <- bind_rows(Qwen.sycophancy_wide, GPT.sycophancy_wide)
+
+# Check dimensions
+cat(sprintf("Qwen wide: %d rows (should be 60 scenarios × 5 prompts = 300)\n", 
+            nrow(Qwen.sycophancy_wide)))
+cat(sprintf("GPT wide: %d rows (should be 60 scenarios × 5 prompts = 300)\n", 
+            nrow(GPT.sycophancy_wide)))
+
+# Preview
+head(combined_sycophancy_wide)
+
+# Test scatterplot for Default prompt
+GPT.sycophancy_wide %>%
+  filter(prompt == "Default") %>%
+  ggplot(aes(x = response_when_B_is_me, y = response_when_A_is_me)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+  geom_point(color = "gray50", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  labs(
+    title = "GPT-4.1: Default (Sycophancy)",
+    x = "Response when A is 'them' (user is B)",
+    y = "Response when A is 'me' (user is A)"
+  ) +
+  theme_minimal() +
+  theme(aspect.ratio = 1)
+
+```
+
+```{r plot}
+
+create_sycophancy_plot_with_coef <- function(data, model_name, prompt_name, prompt_color) {
+  
+  # Calculate mean displacements for this prompt and Default
+  summary_stats <- data %>%
+    filter(model == model_name, prompt %in% c(prompt_name, "Default")) %>%
+    group_by(prompt) %>%
+    summarise(
+      mean_displacement = mean(response_when_A_is_me - response_when_B_is_me),
+      se_displacement = sd(response_when_A_is_me - response_when_B_is_me) / sqrt(n()),
+      t_displacement = mean_displacement / se_displacement,
+      p_displacement = 2 * pt(abs(t_displacement), n() - 1, lower.tail = FALSE),
+      mean_marginal_displacement = mean(marginal_when_A_is_me - marginal_when_B_is_me),
+      se_marginal_displacement = sd(marginal_when_A_is_me - marginal_when_B_is_me) / sqrt(n()),
+      t_marginal = mean_marginal_displacement / se_marginal_displacement,
+      p_marginal = 2 * pt(abs(t_marginal), n() - 1, lower.tail = FALSE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      stars_displacement = case_when(
+        p_displacement < 0.001 ~ "***",
+        p_displacement < 0.01 ~ "**",
+        p_displacement < 0.05 ~ "*",
+        TRUE ~ ""
+      ),
+      stars_marginal = case_when(
+        p_marginal < 0.001 ~ "***",
+        p_marginal < 0.01 ~ "**",
+        p_marginal < 0.05 ~ "*",
+        TRUE ~ ""
+      )
+    )
+  
+  default_stats <- summary_stats %>% filter(prompt == "Default")
+  prompt_stats <- summary_stats %>% filter(prompt == prompt_name)
+  
+  # Create scatterplot with title
+  scatter <- data %>%
+    filter(model == model_name, prompt == prompt_name) %>%
+    ggplot(aes(x = response_when_B_is_me, y = response_when_A_is_me)) +
+    geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+    geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+    geom_abline(slope = 1, intercept = 0, color = "black") +
+    # Prompt points in color
+    geom_point(color = prompt_color, alpha = 0.5, size = 2) +
+    # Marginal points in black
+    geom_point(aes(x = marginal_when_B_is_me, y = marginal_when_A_is_me),
+               color = "black", alpha = 0.7, size = 2) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "white") +
+    labs(
+      title = prompt_name,
+      x = "Party A is 'them'",
+      y = "Party A is 'me'"
+    ) +
+    theme_minimal() +
+    theme(
+      aspect.ratio = 1,
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+    )
+  
+displacement_data <- bind_rows(
+  default_stats %>% mutate(condition = "Default", color = "gray50"),
+  prompt_stats %>% mutate(condition = prompt_name, color = prompt_color),
+  prompt_stats %>% 
+    mutate(condition = paste0(prompt_name, " (blinded)"), color = "black",
+           mean_displacement = mean_marginal_displacement,
+           se_displacement = se_marginal_displacement,
+           stars_displacement = stars_marginal)
+) %>%
+  mutate(
+    condition = factor(condition, levels = c("Default", prompt_name, paste0(prompt_name, " (blinded)"))),
+    star_y = mean_displacement + se_displacement + 0.5 * max(abs(mean_displacement))
+  )
+  
+# Create displacement plot
+displacement_plot <- displacement_data %>%
+  ggplot(aes(x = condition, y = mean_displacement)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  # Original in color
+  geom_point(data = displacement_data %>% filter(condition != paste0(prompt_name, " (blinded)")),
+             aes(color = color), size = 3, alpha = 0.5) +
+  geom_errorbar(data = displacement_data %>% filter(condition != paste0(prompt_name, " (blinded)")),
+                aes(ymin = mean_displacement - se_displacement,
+                    ymax = mean_displacement + se_displacement,
+                    color = color),
+                width = 0.2, linewidth = 0.6, alpha = 0.5) +
+  # Marginal in black
+  geom_point(data = displacement_data %>% filter(condition == paste0(prompt_name, " (blinded)")),
+             aes(color = color), size = 3) +
+  geom_errorbar(data = displacement_data %>% filter(condition == paste0(prompt_name, " (blinded)")),
+                aes(ymin = mean_displacement - se_displacement,
+                    ymax = mean_displacement + se_displacement,
+                    color = color),
+                width = 0.2, linewidth = 0.6) +
+  # Stars
+  geom_text(data = displacement_data,
+            aes(x = condition, y = star_y, label = stars_displacement, color = color),
+            size = 4, fontface = "bold", vjust = 0, inherit.aes = FALSE) +
+  scale_color_identity() +
+  labs(x = NULL, y = "Sycophancy") +
+  theme_minimal() +
+  coord_cartesian(clip = "off") +
+  theme(
+    aspect.ratio = 0.3,
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_text(size = 8),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(t = 15, r = 1, b = 2, l = 1)
+  )
+  
+  # Combine
+  combined <- (scatter / displacement_plot) + plot_layout(heights = c(3, 1))
+  
+  return(combined)
+}
+
+# Define colors
+prompt_colors <- c(
+  "Ignore" = "#4DAF4A",
+  "Don't Be Sycophantic" = "#377EB8",
+  "If You Didn't Know" = "#984EA3",
+  "Neutral" = "#FF7F00"
+)
+
+# Create plots for GPT
+gpt_ignore <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "Ignore", prompt_colors["Ignore"])
+gpt_dont <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "Don't Be Sycophantic", prompt_colors["Don't Be Sycophantic"])
+gpt_if <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "If You Didn't Know", prompt_colors["If You Didn't Know"])
+
+# Create plots for Qwen
+qwen_ignore <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "Ignore", prompt_colors["Ignore"])
+qwen_dont <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "Don't Be Sycophantic", prompt_colors["Don't Be Sycophantic"])
+qwen_if <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "If You Didn't Know", prompt_colors["If You Didn't Know"])
+
+# Combine separately for each model
+library(patchwork)
+gpt_grid <- gpt_ignore | gpt_dont | gpt_if
+qwen_grid <- qwen_ignore | qwen_dont | qwen_if
+
+# Save
+ggsave('figures/sycophancy/GPT_sycophancy.png', plot = gpt_grid, height = 5, width = 15, dpi = 300)
+ggsave('figures/sycophancy/Qwen_sycophancy.png', plot = qwen_grid, height = 5, width = 15, dpi = 300)
+
+```
+
+```{r bar plots}
+
+# Calculate mean absolute displacement for all model × prompt × blinded combinations
+sycophancy_mean_abs_displacement <- combined_sycophancy_wide %>%
+  pivot_longer(
+    cols = c(response_when_A_is_me, response_when_B_is_me, 
+             marginal_when_A_is_me, marginal_when_B_is_me),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  mutate(
+    response_type = ifelse(grepl("marginal", variable), "blinded", "original"),
+    user_side = ifelse(grepl("A_is_me", variable), "A", "B")
+  ) %>%
+  select(model, prompt, scenario_id, response_type, user_side, value, removed_response) %>%
+  pivot_wider(
+    names_from = user_side,
+    values_from = value
+  ) %>%
+  mutate(
+    displacement = A - B,
+    abs_displacement = abs(displacement)
+  ) %>%
+  group_by(model, prompt, response_type) %>%
+  summarise(
+    mean_abs_displacement = mean(abs_displacement),
+    se_abs_displacement = sd(abs_displacement) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# View the results
+print(sycophancy_mean_abs_displacement)
+
+# Check dimensions (should be 2 models × 5 prompts × 2 response types = 20 rows)
+cat(sprintf("Total rows: %d\n", nrow(sycophancy_mean_abs_displacement)))
+
+# Prepare data for barplot
+barplot_data_original <- sycophancy_mean_abs_displacement %>%
+  filter(response_type == "original")
+
+barplot_data_blinded <- sycophancy_mean_abs_displacement %>%
+  filter(response_type == "blinded")
+
+# Define colors
+prompt_colors_bar <- c(
+  "Default" = "gray75",
+  "Ignore" = "#4DAF4A",
+  "Don't Be Sycophantic" = "#377EB8",
+  "If You Didn't Know" = "#984EA3",
+  "Neutral" = "#FF7F00"
+)
+
+# Create barplot function
+create_sycophancy_barplot <- function(data_original, data_blinded, model_name, output_path) {
+  
+  # Filter for this model
+  original <- data_original %>% 
+    filter(model == model_name) %>%
+    mutate(
+      fill_color = prompt_colors_bar[prompt],
+      prompt = factor(prompt, levels = rev(c("Default", "Ignore", "Don't Be Sycophantic", 
+                                              "If You Didn't Know", "Neutral"))),
+      label_text = case_when(
+        prompt == "Default" ~ "Default",
+        prompt == "Ignore" ~ "Ignore",
+        prompt == "Don't Be Sycophantic" ~ "Don't Be Sycophantic",
+        prompt == "If You Didn't Know" ~ "If You Didn't Know",
+        prompt == "Neutral" ~ "Neutral"
+      )
+    )
+  
+  blinded <- data_blinded %>%
+    filter(model == model_name) %>%
+    mutate(prompt = factor(prompt, levels = rev(c("Default", "Ignore", "Don't Be Sycophantic", 
+                                                   "If You Didn't Know", "Neutral"))))
+  
+  p <- ggplot(original, aes(x = prompt, y = mean_abs_displacement)) +
+    # Original bars in color
+    geom_bar(aes(fill = fill_color), stat = "identity", width = 0.7) +
+    scale_fill_identity() +
+    # Blinded bars overlaid in black
+    geom_bar(data = blinded, stat = "identity", width = 0.7, fill = "black") +
+    # Error bars for original
+    geom_errorbar(aes(ymin = mean_abs_displacement - se_abs_displacement,
+                      ymax = mean_abs_displacement + se_abs_displacement),
+                  width = 0.2, linewidth = 0.8) +
+    # Error bars for blinded
+    geom_errorbar(data = blinded,
+                  aes(ymin = mean_abs_displacement - se_abs_displacement,
+                      ymax = mean_abs_displacement + se_abs_displacement),
+                  width = 0.2, linewidth = 0.8) +
+    # Text labels
+    geom_text(aes(y = 0.5, label = label_text),
+              hjust = 0, size = 3, fontface = "bold", color = "white") +
+    scale_y_continuous(expand = c(0, 0),
+                       limits = c(0, max(original$mean_abs_displacement) * 1.1)) +
+    labs(x = NULL, y = "Mean absolute sycophancy") +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid.major.y = element_blank()
+    )
+  
+  ggsave(output_path, plot = p, height = 5, width = 6, dpi = 300)
+  
+  return(p)
+}
+
+# Create barplots
+gpt_barplot <- create_sycophancy_barplot(
+  barplot_data_original %>% filter(prompt !='Neutral'), 
+  barplot_data_blinded %>% filter(prompt !='Neutral'), 
+  "GPT",
+  'figures/sycophancy/GPT_sycophancy_barplot.png'
+)
+
+qwen_barplot <- create_sycophancy_barplot(
+  barplot_data_original %>% filter(prompt !='Neutral'), 
+  barplot_data_blinded %>% filter(prompt !='Neutral'), 
+  "Qwen",
+  'figures/sycophancy/Qwen_sycophancy_barplot.png'
+)
+
+print(gpt_barplot)
+print(qwen_barplot)
+```
+
+```{r complete plots}
+
+# Create complete figure for each model
+create_sycophancy_complete_figure <- function(data, mean_abs_data_original, mean_abs_data_blinded, 
+                                              model_name, output_path) {
+  
+  # Define colors
+  prompt_colors <- c(
+    "Ignore" = "#4DAF4A",
+    "Don't Be Sycophantic" = "#377EB8",
+    "If You Didn't Know" = "#984EA3"
+  )
+  
+  prompt_colors_bar <- c(
+    "Default" = "gray",
+    "Ignore" = "#4DAF4A",
+    "Don't Be Sycophantic" = "#377EB8",
+    "If You Didn't Know" = "#984EA3"
+  )
+  
+  # Create the three scatter+displacement plots
+  p1 <- create_sycophancy_plot_with_coef(data, model_name, "Don't Be Sycophantic", 
+                                         prompt_colors["Don't Be Sycophantic"])
+  p2 <- create_sycophancy_plot_with_coef(data, model_name, "Ignore", 
+                                         prompt_colors["Ignore"])
+  p3 <- create_sycophancy_plot_with_coef(data, model_name, "If You Didn't Know", 
+                                         prompt_colors["If You Didn't Know"])
+  
+  # Create barplot
+  original <- mean_abs_data_original %>% 
+    filter(model == model_name, prompt %in% c("Default", "Ignore", "Don't Be Sycophantic", "If You Didn't Know")) %>%
+    mutate(
+      fill_color = prompt_colors_bar[prompt],
+      prompt = factor(prompt, levels = rev(c("Default", "Ignore", "Don't Be Sycophantic", "If You Didn't Know"))),
+      label_text = case_when(
+        prompt == "Default" ~ "Default",
+        prompt == "Ignore" ~ "Ignore",
+        prompt == "Don't Be Sycophantic" ~ "Don't Be Sycophantic",
+        prompt == "If You Didn't Know" ~ "If You Didn't Know"
+      )
+    )
+  
+  blinded <- mean_abs_data_blinded %>%
+    filter(model == model_name, prompt %in% c("Default", "Ignore", "Don't Be Sycophantic", "If You Didn't Know")) %>%
+    mutate(prompt = factor(prompt, levels = rev(c("Default", "Ignore", "Don't Be Sycophantic", "If You Didn't Know"))))
+  
+  p4 <- ggplot(original, aes(x = prompt, y = mean_abs_displacement)) +
+    # Original bars in color
+    geom_bar(aes(fill = fill_color), stat = "identity", width = 0.7) +
+    scale_fill_identity() +
+    # Blinded bars overlaid in black
+    geom_bar(data = blinded, stat = "identity", width = 0.7, fill = "black") +
+    # Error bars for original
+    geom_errorbar(aes(ymin = mean_abs_displacement - se_abs_displacement,
+                      ymax = mean_abs_displacement + se_abs_displacement),
+                  width = 0.2, linewidth = 0.8) +
+    # Error bars for blinded
+    geom_errorbar(data = blinded,
+                  aes(ymin = mean_abs_displacement - se_abs_displacement,
+                      ymax = mean_abs_displacement + se_abs_displacement),
+                  width = 0.2, linewidth = 0.8) +
+    # Text labels
+    geom_text(aes(y = 0.5, label = label_text),
+              hjust = 0, size = 3, fontface = "bold", color = "white") +
+    scale_y_continuous(expand = c(0, 0),
+                       limits = c(0, max(original$mean_abs_displacement) * 1.1)) +
+    labs(x = NULL, y = "Mean absolute sycophancy") +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid.major.y = element_blank()
+    )
+  
+  # Combine in 2×2 grid
+  combined <- (p1 | p2) / (p3 | p4)
+  
+  # Save
+  ggsave(output_path, plot = combined, height = 7, width = 6, dpi = 300)
+  
+  return(combined)
+}
+
+# Create complete figures
+gpt_complete <- create_sycophancy_complete_figure(
+  combined_sycophancy_wide,
+  barplot_data_original,
+  barplot_data_blinded,
+  "GPT",
+  'figures/sycophancy/GPT_sycophancy_complete.png'
+)
+
+qwen_complete <- create_sycophancy_complete_figure(
+  combined_sycophancy_wide,
+  barplot_data_original,
+  barplot_data_blinded,
+  "Qwen",
+  'figures/sycophancy/Qwen_sycophancy_complete.png'
+)
+
+```
+
+```{r deferral}
+deferral_by_side <- combined_sycophancy %>%
+  mutate(
+    deferral_when_favourable = ifelse(
+      my_version=='A', pA_given_A, 1-pA_given_B
+      ),
+    deferral_when_unfavourable = ifelse(
+      my_version=='A',1-pA_given_B, pA_given_A
+    ),
+  )
+
+# Approach 1: Average within scenarios first (df = 59)
+deferral_ttests_scenario <- deferral_by_side %>%
+  filter(prompt != "Default") %>%
+  group_by(model, prompt, scenario_id) %>%
+  summarise(
+    deferral_when_favourable = mean(deferral_when_favourable),
+    deferral_when_unfavourable = mean(deferral_when_unfavourable),
+    .groups = "drop"
+  ) %>%
+  group_by(model, prompt) %>%
+  summarise(
+    mean_favorable = mean(deferral_when_favourable),
+    mean_unfavorable = mean(deferral_when_unfavourable),
+    t_statistic = t.test(deferral_when_favourable, deferral_when_unfavourable, 
+                         paired = TRUE)$statistic,
+    p_value = t.test(deferral_when_favourable, deferral_when_unfavourable, 
+                     paired = TRUE)$p.value,
+    df = t.test(deferral_when_favourable, deferral_when_unfavourable, 
+                paired = TRUE)$parameter,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significance = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01 ~ "**",
+      p_value < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+```
+
+Both models mostly deferrred to the blinded, counterfactual selves (Qwen did so on 
+`r c(combined_sycophancy%>%filter(model=='Qwen')%>%pull(pA_given_A),1-combined_sycophancy%>%filter(model=='GPT')%>%pull(pA_given_B))%>%mean()%>%printnum()` of all cases, GPT on `r c(combined_sycophancy%>%filter(model=='GPT')%>%pull(pA_given_A),1-combined_sycophancy%>%filter(model=='GPT')%>%pull(pA_given_B))%>%mean()%>%printnum()`). As a result, their responses were more aligned with that of a truly blinded model (Fig., black bars). And yet, the two models deferred to their blinded selves significantly more when its response was favourable to the user (Qwen: `r deferral_by_side%>%filter(model=='Qwen')%>%pull(deferral_when_favourable)%>%mean()%>%printnum()`, GPT: `r deferral_by_side%>%filter(model=='GPT')%>%pull(deferral_when_favourable)%>%mean()%>%printnum()`), compared to not (Qwen: `r deferral_by_side%>%filter(model=='Qwen')%>%pull(deferral_when_unfavourable)%>%mean()%>%printnum()`, GPT: `r deferral_by_side%>%filter(model=='GPT')%>%pull(deferral_when_unfavourable)%>%mean()%>%printnum()`). This difference in deferral rates was significant for all cases apart from Qwen, when instructed to ignore the user's identity, and GPT, when  instructed not ot be sycophantic. It resulted in significant sycophancy for all interventions ($p<0.01$ for all), even if much smaller than with any other intervention (see Fig. , black markers). This selective deferral to the blinded model is revealing: we take it to mean that models are sometimes knowingly sycophantic, giving user-serving responses even when instructed to avoid doing so and with direct access to a counterfactual unbiased response.

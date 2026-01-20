@@ -1,0 +1,808 @@
+---
+title: "anslysis 4 tool use: marginal probabilities"
+output: word_document
+date: "2025-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE   # Don't show messages
+
+)
+
+library(tidyverse)
+library(jsonlite)
+library(purrr)
+library(stringr)
+library(lmerTest)
+library(papaja)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+library(matrixStats)
+
+```
+
+
+```{r load data}
+source('loadAndFormatTamkinData.R')
+source('loadAndFormatTamkinToolData.R')
+source('loadAndFormatTamkinToolRespData.R')
+```
+
+
+```{r analyze and plot}
+
+combined_yn_df <- Qwen.Tamkin.YN.df %>%
+  dplyr::select(model, filled_template,vignette,race,gender,prompt, response)%>%
+  rbind(GPT.Tamkin.YN.df %>%
+          ungroup()%>%
+  dplyr::select(model, filled_template,vignette,race,gender,prompt, response))
+
+combined_full_df <- combined_resp_df %>% 
+  filter(
+    tool_desc == 'run counterfactual simulation' & 
+    as.character(prompt) %in% c('ignore', 'if_you_didnt_know', 'dont_discriminate', 'default')
+  ) %>% 
+  mutate(after_self_call_response = yes_logit - no_logit) %>%
+  select(filled_template, prompt, model_response, after_self_call_response, model) %>%
+  merge(
+    combined_yn_df)
+
+removed_pyes_df <- combined_yn_df %>%
+  filter(prompt=='removed') %>%
+  mutate(removed_pyes = exp(response)/(1+exp(response))) %>%
+  dplyr::select(model, vignette,race,gender, removed_pyes)
+
+included_pyes_df <- combined_full_df %>%
+  mutate(pyes=exp(response)/(1+exp(response)),
+         after_self_call_pyes = exp(after_self_call_response)/(1+exp(after_self_call_response))) %>%
+  dplyr::select(model, vignette,race,gender,prompt, model_response,after_self_call_pyes)
+
+pyes_df <- removed_pyes_df %>%
+  merge(included_pyes_df) %>%
+  mutate(product = removed_pyes*after_self_call_pyes) %>%
+  group_by(model, prompt,model_response) %>% 
+  summarise(weighted_pyes = sum(product)/sum(removed_pyes),
+            pyes = mean(after_self_call_pyes))
+
+
+
+# ------------------------------------------------------------------------------
+# FIGURE 1: Response after simulation, split by internal model response
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# FIGURE 1: Response after simulation, split by internal model response
+# Split into separate figures for each model
+# ------------------------------------------------------------------------------
+
+# Qwen figure
+combined_full_df %>% 
+  filter(model == "Qwen") %>%
+  ggplot(aes(x = response, y = after_self_call_response, color = as.factor(model_response))) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  facet_grid(~ prompt, labeller = labeller(
+    prompt = c(
+      "ignore" = "Ignore",
+      "if_you_didnt_know" = "If You Didn't Know",
+      "dont_discriminate" = "Don't Discriminate"
+    )
+  )) +
+  scale_color_manual(
+    values = c("No" = "#E41A1C", "Yes" = "#377EB8"),
+    labels = c("No" = "Internal model said \"no\"", 
+               "Yes" = "Internal model said \"yes\"")
+  ) +
+  labs(
+    x = "Default Response",
+    y = "Response Conditioned on Self-Simulation",
+    color = NULL,
+    title = "Qwen 2.5-7B"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 10, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+  )
+
+ggsave(
+  'figures/self-calls/Qwen2.5-7B/responses_after_simulation_Tamkin.png', 
+  height = 4.5, width = 10, dpi = 300
+)
+
+# GPT figure
+combined_full_df %>% 
+  filter(model == "GPT") %>%
+  ggplot(aes(x = response, y = after_self_call_response, color = as.factor(model_response))) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  facet_grid(~ prompt, labeller = labeller(
+    prompt = c(
+      "ignore" = "Ignore",
+      "if_you_didnt_know" = "If You Didn't Know",
+      "dont_discriminate" = "Don't Discriminate"
+    )
+  )) +
+  scale_color_manual(
+    values = c("No" = "#E41A1C", "Yes" = "#377EB8"),
+    labels = c("No" = "Internal model said \"no\"", 
+               "Yes" = "Internal model said \"yes\"")
+  ) +
+  labs(
+    x = "Default Response",
+    y = "Response Conditioned on Self-Simulation",
+    color = NULL,
+    title = "GPT-4.1"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 10, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+  )
+
+ggsave(
+  'figures/self-calls/GPT4.1/responses_after_simulation.png', 
+  height = 4.5, width = 10, dpi = 300
+)
+
+```
+
+Both Qwen and GPT used self-calling reasonably, querying their counterfactual selves when attempting to ignore information or to estimate what they would have decided without it, and mostly removing the to-be-ignored details from the self-call. Still, self-calls were not perfect: the gender of individuals was often revealed by the use of gendered pronouns, and sometimes the model presented the blinded information without including the question itself. A first challenge is therefore to train models to use self-calling more reliably.
+
+Assuming reliable and accurate self-calling, for decisions to be unbiased the model needs to lawfully follow the decision of its blinded counterfactual self. To estimate whether this was the case, we presented the two models with prefilled dialogues in which they were initially presented with a scenario, used self-calling to query what they would have responded to the same scenario with gender and race information removed, and then received a response from their counterfacutal, blinded self: either a "Yes" or a "No". We then measured the relative probability of a "yes" or "no" response following the tool use outcome. 
+
+```{r fit regression model}
+
+regression_model_df <- Qwen.Tamkin.response_by_prompt %>%
+  rbind(GPT.Tamkin.response_by_prompt %>%
+          dplyr::select(model, vignette,race,gender,prompt, response,removed_response)) %>%
+  merge(combined_resp_df %>%
+          mutate(after_self_call_response=yes_logit-no_logit) %>%
+          filter(tool_desc=='run counterfactual simulation') %>%
+          dplyr::select(model, vignette,gender,race,prompt, model_response, after_self_call_response)) %>%
+  filter(prompt %in% c('ignore', 'if_you_didnt_know', 'dont_discriminate')) %>%
+  mutate(
+    model_response = factor(model_response, levels = c("No", "Yes")),
+    prompt = factor(prompt, levels = c('dont_discriminate', 'ignore', 'if_you_didnt_know'))
+  )
+
+# Fit models for each model × prompt combination
+models_by_combo <- regression_model_df %>%
+group_by(model, prompt) %>%
+  summarise(
+    n_obs = n(),
+    model_fit = list(lm(after_self_call_response ~ removed_response + race + gender + model_response, data = cur_data())),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    tidy_results = map(model_fit, tidy),
+    glance_results = map(model_fit, glance)
+  )
+
+# Extract coefficients
+coefficients_table <- models_by_combo %>%
+  select(model, prompt, n_obs, tidy_results) %>%
+  unnest(tidy_results) %>%
+  mutate(
+    sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01 ~ "**",
+      p.value < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  ) %>%
+  select(model, prompt, term, estimate, std.error, statistic, p.value, sig)
+
+print(coefficients_table, n = Inf)
+
+# Extract model fit statistics
+model_fit_stats <- models_by_combo %>%
+  select(model, prompt, n_obs, glance_results) %>%
+  unnest(glance_results) %>%
+  select(model, prompt, n_obs, r.squared, adj.r.squared, sigma, AIC, BIC)
+
+print(model_fit_stats)
+
+# Create a summary focusing on race and gender coefficients
+race_gender_effects <- coefficients_table %>%
+  filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+  arrange(model, prompt, term)
+
+print(race_gender_effects, n = Inf)
+
+# Create a wide format for easier comparison across prompts
+coefficients_wide <- coefficients_table %>%
+  select(model, prompt, term, estimate, sig) %>%
+  mutate(estimate_sig = paste0(sprintf("%.2f", estimate), sig)) %>%
+  select(-estimate, -sig) %>%
+  pivot_wider(
+    names_from = c(model, prompt),
+    values_from = estimate_sig,
+    names_sep = "_"
+  )
+
+print(coefficients_wide, n = Inf)
+
+
+```
+
+
+
+
+
+
+
+<!-- Responses were mostly positive when the internal model responded with a "Yes" (Qwen: mean response = `r combined_full_df %>% filter(model == "Qwen" & model_response=='Yes')%>%pull(after_self_call_response)%>%mean()%>%printnum()`, SE = `r combined_full_df %>% filter(model == "Qwen" & model_response=='Yes')%>%pull(after_self_call_response)%>%se()%>%printnum()`; `r combined_full_df %>% filter(model == "Qwen" & model_response=='Yes')%>%mutate(positive=after_self_call_response>0)%>%pull(positive)%>%mean()%>%printnum()` of all responses were positive; GPT: mean response = `r combined_full_df %>% filter(model == "GPT" & model_response=='Yes')%>%pull(after_self_call_response)%>%mean()%>%printnum()`, SE = `r combined_full_df %>% filter(model == "GPT" & model_response=='Yes')%>%pull(after_self_call_response)%>%se()%>%printnum()`; `r combined_full_df %>% filter(model == "GPT" & model_response=='Yes')%>%mutate(positive=after_self_call_response>0)%>%pull(positive)%>%mean()%>%printnum()` of all responses were positive), and mostly negative when it responded with a "No" (Qwen: mean response = `r combined_full_df %>% filter(model == "Qwen" & model_response=='No')%>%pull(after_self_call_response)%>%mean()%>%printnum()`, SE = `r combined_full_df %>% filter(model == "Qwen" & model_response=='No')%>%pull(after_self_call_response)%>%se()%>%printnum()`; `r combined_full_df %>% filter(model == "Qwen" & model_response=='No')%>%mutate(negative=after_self_call_response<0)%>%pull(negative)%>%mean()%>%printnum()` of all responses were negative; GPT: mean response = `r combined_full_df %>% filter(model == "GPT" & model_response=='No')%>%pull(after_self_call_response)%>%mean()%>%printnum()`, SE = `r combined_full_df %>% filter(model == "GPT" & model_response=='No')%>%pull(after_self_call_response)%>%se()%>%printnum()`; `r combined_full_df %>% filter(model == "GPT" & model_response=='No')%>%mutate(negative=after_self_call_response<0)%>%pull(negative)%>%mean()%>%printnum()` of all responses were negative).  -->
+Qwen almost always deferred to its counterfactual, blinded, self when making decisions. When asked to ignore race and gender information, Qwen responded "Yes" on `r pyes_df%>%filter(model=='Qwen' & prompt=='ignore' & model_response=='Yes')%>%pull(pyes)%>%printnum()` of all trials in which the counterfactual self responded "Yes", and on `r pyes_df%>%filter(model=='Qwen' & prompt=='ignore' & model_response=='No')%>%pull(pyes)%>%printnum()` of the trials in which it responded "No". These figures were `r pyes_df%>%filter(model=='Qwen' & prompt=='dont_discriminate' & model_response=='Yes')%>%pull(pyes)%>%printnum()`/`r pyes_df%>%filter(model=='Qwen' & prompt=='dont_discriminate' & model_response=='No')%>%pull(pyes)%>%printnum()` when instructed not to discriminate, and `r pyes_df%>%filter(model=='Qwen' & prompt=='if_you_didnt_know' & model_response=='Yes')%>%pull(pyes)%>%printnum()`/`r pyes_df%>%filter(model=='Qwen' & prompt=='if_you_didnt_know' & model_response=='No')%>%pull(pyes)%>%printnum()` when estimating what it would have responded had it not known race and gender. Things were different for GPT: whenever its blinded version responded with a "Yes", it almost always deferred to it (probably of responding "Yes" for "ignore": `r pyes_df%>%filter(model=='GPT' & prompt=='ignore' & model_response=='Yes')%>%pull(pyes)%>%printnum()`; "don't discriminate": `r pyes_df%>%filter(model=='GPT' & prompt=='dont_discriminate' & model_response=='Yes')%>%pull(pyes)%>%printnum()`; "if you didn't know": `r pyes_df%>%filter(model=='GPT' & prompt=='if_you_didnt_know' & model_response=='Yes')%>%pull(pyes)%>%printnum()`), but it often overrode the blinded model's decision when it responded with a "No" (probably of responding "Yes" for "ignore": `r pyes_df%>%filter(model=='GPT' & prompt=='ignore' & model_response=='No')%>%pull(pyes)%>%printnum()`; "don't discriminate": `r pyes_df%>%filter(model=='GPT' & prompt=='dont_discriminate' & model_response=='No')%>%pull(pyes)%>%printnum()`; "if you didn't know": `r pyes_df%>%filter(model=='GPT' & prompt=='if_you_didnt_know' & model_response=='No')%>%pull(pyes)%>%printnum()`). Crucially, models overrode their blinded counterparts' decisions when it disagreed with the decision they would have made under true blindness. Generally, this overriding did not happen more often for specific demographics, with the exception that GPT, in the "if you didn't know" intervention, significantly corrected the blinded model's response to be more favourable to Black individuals ($\beta=$ `r race_gender_effects %>% filter(model=='GPT' & prompt=='if_you_didnt_know' & term=='raceBlack')%>%pull(estimate)%>%printnum()`, p `r race_gender_effects %>% filter(model=='GPT' & prompt=='if_you_didnt_know' & term=='raceBlack')%>%pull(p.value)%>%printp(add_equals=T)` from a linear model predicting response from the decision of the blinded model (Yes or No), the response of a blinded model in logit units, race, and gender).
+
+```{r  complete figure}
+marginal_response_data <- removed_pyes_df %>%
+  merge(included_pyes_df) %>%
+  group_by(model, vignette, race, gender, prompt) %>%
+  summarise(
+    removed_pyes = first(removed_pyes),  # Should be constant within group
+    after_self_call_yes = after_self_call_pyes[model_response == 'Yes'][1],
+    after_self_call_no = after_self_call_pyes[model_response == 'No'][1],
+    marginal_pyes = removed_pyes * after_self_call_yes + (1 - removed_pyes) * after_self_call_no,
+    .groups = "drop"
+  )  %>%
+  mutate(
+    marginal_response = log(marginal_pyes)-log(1 - marginal_pyes),
+    removed_response = log(removed_pyes)- log(1 - removed_pyes)
+  )
+
+create_marginal_figure <- function(original_data, marginal_data, mean_abs_diff_data, 
+                                   model_name, output_path) {
+  
+  # Filter data for this model
+  model_original <- original_data %>% filter(model == model_name)
+  model_marginal <- marginal_data %>% filter(model == model_name)
+  
+  # Clean marginal data
+  model_marginal_clean <- model_marginal %>%
+    filter(
+      !is.na(marginal_response) & 
+        !is.infinite(marginal_response) &
+        !is.na(removed_response) & 
+        !is.infinite(removed_response)
+    ) %>%
+    mutate(
+      gender = factor(gender, levels = c("male", "female")),
+      race = factor(race, levels = c("white", "Black", "Hispanic", "Asian"))
+    )
+  
+  # Create darker colors (original + 50% black overlay)
+  darken_color <- function(color) {
+    rgb_vals <- col2rgb(color) / 255
+    darkened <- rgb_vals * 0.5  # Equivalent to 50% black overlay
+    rgb(darkened[1], darkened[2], darkened[3])
+  }
+  
+  colors <- c(
+    dont_discriminate = "#377EB8",
+    ignore = "#4DAF4A",
+    if_you_didnt_know = "#984EA3"
+  )
+  
+  dark_colors <- sapply(colors, darken_color)
+  
+# Function to create scatter plot
+create_scatter <- function(original_data, marginal_data, prompt_name, prompt_label, color_val) {
+  original_subset <- original_data %>% filter(prompt == prompt_name)
+  marginal_subset <- marginal_data %>% filter(prompt == prompt_name)
+  
+  ggplot() +
+    geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+    geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+    # Original points in background (colored, low opacity)
+    geom_point(data = original_subset,
+               aes(x = removed_response, y = response), 
+               color = color_val, alpha = 0.1, size = 1.5) +
+    # Marginal points in foreground (black)
+    geom_point(data = marginal_subset,
+               aes(x = removed_response, y = marginal_response), 
+               color = "black", alpha = 0.8, size = 1.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "white") +
+    labs(
+      title = prompt_label,
+      x = "Blind to race and gender",
+      y = "Blinded via self-call"
+    ) +
+    theme_minimal() +
+    theme(
+      aspect.ratio = 1,
+      strip.text = element_text(size = 10, face = "bold"),
+      plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+      plot.margin = margin(3, 1, 1, 1)
+    )
+}
+  
+  # Function to extract coefficients
+  get_coefs_for_prompt <- function(data, prompt_name) {
+    df <- data %>% filter(prompt == prompt_name)
+    m4 <- lm(marginal_response ~ removed_response + gender + race, data = df)
+    
+    tidy(m4) %>%
+      filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+      mutate(
+        prompt = prompt_name,
+        term_clean = case_when(
+          term == "genderfemale" ~ "Female",
+          term == "raceBlack" ~ "Black",
+          term == "raceHispanic" ~ "Hispanic",
+          term == "raceAsian" ~ "Asian"
+        ),
+        term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian")),
+        significance = case_when(
+          p.value < 0.001 ~ "***",
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+          TRUE ~ ""
+        ),
+        star_y = estimate + std.error + 0.05 * max(abs(estimate))
+      )
+  }
+  
+  # Get default coefficients
+  get_coefs_for_default <- function(data) {
+    df <- data %>% 
+      filter(prompt == "default") %>%
+      mutate(
+        gender = factor(gender, levels = c("male", "female")),
+        race = factor(race, levels = c("white", "Black", "Hispanic", "Asian"))
+      )
+    
+    m4 <- lm(response ~ removed_response + gender + race, data = df)
+    
+    tidy(m4) %>%
+      filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+      mutate(
+        term_clean = case_when(
+          term == "genderfemale" ~ "Female",
+          term == "raceBlack" ~ "Black",
+          term == "raceHispanic" ~ "Hispanic",
+          term == "raceAsian" ~ "Asian"
+        ),
+        term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian"))
+      ) %>%
+      select(term_clean, estimate_default = estimate, std.error_default = std.error)
+  }
+  
+  default_coefs <- get_coefs_for_default(model_original)
+  
+  # Get marginal coefficients
+  marginal_coefs <- bind_rows(
+    get_coefs_for_prompt(model_marginal_clean, "dont_discriminate"),
+    get_coefs_for_prompt(model_marginal_clean, "ignore"),
+    get_coefs_for_prompt(model_marginal_clean, "if_you_didnt_know")
+  )
+  
+  # Get coefficients for original interventions (non-self-call)
+get_coefs_for_original <- function(data, prompt_name) {
+  df <- data %>% 
+    filter(prompt == prompt_name) %>%
+    mutate(
+      gender = factor(gender, levels = c("male", "female")),
+      race = factor(race, levels = c("white", "Black", "Hispanic", "Asian"))
+    )
+  
+  m4 <- lm(response ~ removed_response + gender + race, data = df)
+  
+  tidy(m4) %>%
+    filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+    mutate(
+      prompt = prompt_name,
+      term_clean = case_when(
+        term == "genderfemale" ~ "Female",
+        term == "raceBlack" ~ "Black",
+        term == "raceHispanic" ~ "Hispanic",
+        term == "raceAsian" ~ "Asian"
+      ),
+      term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian"))
+    ) %>%
+    select(prompt, term_clean, estimate, std.error)
+}
+
+# Get original intervention coefficients
+original_coefs <- bind_rows(
+  get_coefs_for_original(model_original, "dont_discriminate"),
+  get_coefs_for_original(model_original, "ignore"),
+  get_coefs_for_original(model_original, "if_you_didnt_know")
+)
+
+  # Function to create coefficient plot
+create_coef_plot <- function(original_coef_data, marginal_coef_data, prompt_name, default_ref, prompt_color) {
+  # Get original intervention coefficients
+  original_plot_data <- original_coef_data %>% 
+    filter(prompt == prompt_name) %>%
+    left_join(default_ref, by = "term_clean")
+  
+  # Get marginal coefficients
+  marginal_plot_data <- marginal_coef_data %>% 
+    filter(prompt == prompt_name) %>%
+    left_join(default_ref, by = "term_clean")
+  
+  ggplot(marginal_plot_data, aes(x = term_clean)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    # Default in gray background (far left)
+    geom_point(aes(y = estimate_default), size = 2, color = "gray50", alpha = 0.3,
+               position = position_nudge(x = -0.25)) +
+    geom_errorbar(
+      aes(ymin = estimate_default - std.error_default, 
+          ymax = estimate_default + std.error_default),
+      width = 0.2, linewidth = 0.6, color = "gray50", alpha = 0.3,
+      position = position_nudge(x = -0.25)
+    ) +
+    # Original intervention in color with low opacity (middle left)
+    geom_point(data = original_plot_data, aes(y = estimate), 
+               size = 2, color = prompt_color, alpha = 0.3,
+               position = position_nudge(x = -0.1)) +
+    geom_errorbar(
+      data = original_plot_data,
+      aes(ymin = estimate - std.error, ymax = estimate + std.error),
+      width = 0.2, linewidth = 0.6, color = prompt_color, alpha = 0.3,
+      position = position_nudge(x = -0.1)
+    ) +
+    # Marginal (self-call) in black (right)
+    geom_point(aes(y = estimate), size = 2, color = "black",
+               position = position_nudge(x = 0.1)) +
+    geom_errorbar(
+      aes(ymin = estimate - std.error, 
+          ymax = estimate + std.error),
+      width = 0.2, linewidth = 0.6, color = "black",
+      position = position_nudge(x = 0.1)
+    ) +
+    geom_text(
+      aes(label = significance, y = star_y),
+      size = 4, color = "black", fontface = "bold", vjust = 0,
+      position = position_nudge(x = 0.1)
+    ) +
+    labs(x = NULL, y = "β") +
+    theme_minimal() +
+    coord_cartesian(clip = "off") +
+    theme(
+      aspect.ratio = 0.3,
+      axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+      axis.title.y = element_text(size = 8),
+      panel.grid.major.x = element_blank(),
+      plot.margin = margin(t = 15, r = 1, b = 2, l = 1)
+    )
+}
+
+  # Create scatter plots with darker colors
+# Create scatter plots with original in background
+# Create scatter plots with original colors at alpha=0.1
+s1 <- create_scatter(model_original, model_marginal_clean, "dont_discriminate", 
+                     "Don't Discriminate", "#377EB8")
+s2 <- create_scatter(model_original, model_marginal_clean, "ignore", 
+                     "Ignore", "#4DAF4A")
+s3 <- create_scatter(model_original, model_marginal_clean, "if_you_didnt_know", 
+                     "If You Didn't Know", "#984EA3")
+  
+  # Create coefficient plots with darker colors
+# Create coefficient plots - pass the full dataframes, function will filter
+c1 <- create_coef_plot(original_coefs, marginal_coefs, "dont_discriminate", default_coefs, "#377EB8")
+c2 <- create_coef_plot(original_coefs, marginal_coefs, "ignore", default_coefs, "#4DAF4A")
+c3 <- create_coef_plot(original_coefs, marginal_coefs, "if_you_didnt_know", default_coefs, "#984EA3")
+  
+  # Combine scatter + coef
+  col1 <- (s1 / c1) + plot_layout(heights = c(3, 1))
+  col2 <- (s2 / c2) + plot_layout(heights = c(3, 1))
+  col3 <- (s3 / c3) + plot_layout(heights = c(3, 1))
+  
+  # Calculate mean abs diff for marginal
+  marginal_mean_abs_diff <- model_marginal_clean %>%
+    group_by(prompt) %>%
+    summarise(
+      mean_abs_diff = mean(abs(marginal_response - removed_response)),
+      se_abs_diff = sd(abs(marginal_response - removed_response)) / sqrt(n()),
+      type = "marginal",
+      .groups = "drop"
+    )
+  
+  # Get original mean abs diff
+  original_mean_abs_diff <- mean_abs_diff_data %>%
+    mutate(type = "original")
+  
+  # Combine
+  combined_mean_abs_diff <- bind_rows(original_mean_abs_diff, marginal_mean_abs_diff) %>%
+    filter(prompt %in% c('default', 'dont_discriminate', 'ignore', 'if_you_didnt_know'))
+  
+  # Separate for plotting
+  original_data_bar <- combined_mean_abs_diff %>% filter(type == "original")
+  marginal_data_bar <- combined_mean_abs_diff %>% filter(type == "marginal")
+  
+ # Create barplot with new order
+p_bar <- original_data_bar %>%
+  mutate(
+    fill_color = case_when(
+      prompt == "default" ~ "gray",
+      prompt == "dont_discriminate" ~ "#377EB8",
+      prompt == "ignore" ~ "#4DAF4A",
+      prompt == "if_you_didnt_know" ~ "#984EA3"
+    ),
+    prompt = factor(prompt, levels = c("if_you_didnt_know","dont_discriminate",  "ignore", "default")),
+    label_text = case_when(
+      prompt == "default" ~ "Default",
+      prompt == "dont_discriminate" ~ "Don't Discriminate",
+      prompt == "ignore" ~ "Ignore",
+      prompt == "if_you_didnt_know" ~ "If You Didn't Know"
+    )
+  ) %>%
+  ggplot(aes(x = prompt, y = mean_abs_diff)) +
+  # Original bars
+  geom_bar(aes(fill = fill_color), stat = "identity", width = 0.7) +
+  scale_fill_identity() +
+  # Marginal bars overlaid in black
+  geom_bar(data = marginal_data_bar %>% 
+             mutate(prompt = factor(prompt, levels = c("if_you_didnt_know","dont_discriminate",  "ignore", "default"))),
+           stat = "identity", width = 0.7, 
+           fill = "black") +
+  # Error bars
+  geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff, 
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = 0.2, linewidth = 0.8) +
+  geom_errorbar(data = marginal_data_bar %>% 
+                  mutate(prompt = factor(prompt, levels = c("if_you_didnt_know","dont_discriminate",  "ignore", "default"))),
+                aes(ymin = mean_abs_diff - se_abs_diff, 
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = 0.2, linewidth = 0.8) +
+  # Text labels
+  geom_text(
+    aes(y = 0.3, label = label_text),
+    hjust = 0, size = 3, fontface = "bold", color = "white"
+  ) +
+  scale_y_continuous(expand = c(0, 0), 
+                     limits = c(0, max(combined_mean_abs_diff$mean_abs_diff) * 1.1)) +
+  labs(x = NULL, y = "mean absolute difference from true blindness") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank()
+  )  
+  # Combine everything
+  final_plot <- (col1 | col2) / (col3 | p_bar)
+  
+  # Save
+  ggsave(output_path, plot = final_plot, height = 7, width = 6, dpi = 300)
+  
+  return(list(marginal_coefs = marginal_coefs, default_coefs = default_coefs))
+}
+
+# Apply to GPT
+gpt_results <- create_marginal_figure(
+  GPT.Tamkin.response_by_prompt,
+  marginal_response_data,
+  GPT.Tamkin.mean_abs_diff,
+  "GPT",
+  'figures/tamkin/GPT4.1/marginal_complete_figure.png'
+)
+
+# Apply to Qwen
+qwen_results <- create_marginal_figure(
+  Qwen.Tamkin.response_by_prompt,
+  marginal_response_data,
+  Qwen.Tamkin.mean_abs_diff,
+  "Qwen",
+  'figures/tamkin/Qwen2.5-7B/marginal_complete_figure.png'
+)
+
+```
+ 
+Despite these imperfections, access to the response of a counterfactual, blinded, self, produced responses that were more aligned with the resposnes of a truly blinded model than any of the other tested interventions. Indeed, the mean absolute difference relative to a truly blinded response was lower than default in all three interventions (black bars in Fig. X), and responses were no longer significantly biased in favour, or against, any specific demographic.
+
+
+```{r default}
+
+create_default_selfcall_comparison <- function(original_data, marginal_data, output_path) {
+  
+  # Colors for each model
+  gpt_color <- "darkgray"  
+  qwen_color <- "darkgray"  
+  
+  # Function to create scatter plot for one model
+  create_scatter <- function(original_data, marginal_data, model_name, model_label, color_val) {
+    original_subset <- original_data %>% 
+      filter(model == model_name, prompt == "default")
+    
+    marginal_subset <- marginal_data %>% 
+      filter(model == model_name, prompt == "default") %>%
+      filter(
+        !is.na(marginal_response) & 
+        !is.infinite(marginal_response) &
+        !is.na(removed_response) & 
+        !is.infinite(removed_response)
+      )
+    
+    ggplot() +
+      geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+      geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+      # Original points in background (colored, alpha = 0.1)
+      geom_point(data = original_subset,
+                 aes(x = removed_response, y = response), 
+                 color = color_val, alpha = 0.7, size = 1.5) +
+      # Marginal points in foreground (black)
+      geom_point(data = marginal_subset,
+                 aes(x = removed_response, y = marginal_response), 
+                 color = "black", alpha = 0.7, size = 1.5) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "white") +
+      labs(
+        title = model_label,
+        x = "Blind to race and gender",
+        y = "Blinded via self-call"
+      ) +
+      theme_minimal() +
+      theme(
+        aspect.ratio = 1,
+        plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        plot.margin = margin(3, 1, 1, 1)
+      )
+  }
+  
+  # Function to extract coefficients for original
+  get_coefs_original <- function(data, model_name) {
+    df <- data %>% 
+      filter(model == model_name, prompt == "default") %>%
+      mutate(
+        gender = factor(gender, levels = c("male", "female")),
+        race = factor(race, levels = c("white", "Black", "Hispanic", "Asian"))
+      )
+    
+    m4 <- lm(response ~ removed_response + gender + race, data = df)
+    
+    tidy(m4) %>%
+      filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+      mutate(
+        model = model_name,
+        term_clean = case_when(
+          term == "genderfemale" ~ "Female",
+          term == "raceBlack" ~ "Black",
+          term == "raceHispanic" ~ "Hispanic",
+          term == "raceAsian" ~ "Asian"
+        ),
+        term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian"))
+      ) %>%
+      select(model, term_clean, estimate, std.error)
+  }
+  
+  # Function to extract coefficients for marginal
+  get_coefs_marginal <- function(data, model_name) {
+    df <- data %>% 
+      filter(model == model_name, prompt == "default") %>%
+      filter(
+        !is.na(marginal_response) & 
+        !is.infinite(marginal_response) &
+        !is.na(removed_response) & 
+        !is.infinite(removed_response)
+      ) %>%
+      mutate(
+        gender = factor(gender, levels = c("male", "female")),
+        race = factor(race, levels = c("white", "Black", "Hispanic", "Asian"))
+      )
+    
+    m4 <- lm(marginal_response ~ removed_response + gender + race, data = df)
+    
+    tidy(m4) %>%
+      filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+      mutate(
+        model = model_name,
+        term_clean = case_when(
+          term == "genderfemale" ~ "Female",
+          term == "raceBlack" ~ "Black",
+          term == "raceHispanic" ~ "Hispanic",
+          term == "raceAsian" ~ "Asian"
+        ),
+        term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian")),
+        significance = case_when(
+          p.value < 0.001 ~ "***",
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+          TRUE ~ ""
+        ),
+        star_y = estimate + std.error + 0.05 * max(abs(estimate))
+      )
+  }
+  
+  # Get coefficients for both models
+  gpt_coefs_original <- get_coefs_original(original_data, "GPT")
+  qwen_coefs_original <- get_coefs_original(original_data, "Qwen")
+  
+  gpt_coefs_marginal <- get_coefs_marginal(marginal_data, "GPT")
+  qwen_coefs_marginal <- get_coefs_marginal(marginal_data, "Qwen")
+  
+  # Function to create coefficient plot
+  create_coef_plot <- function(original_coefs, marginal_coefs, model_name, color_val) {
+    original_plot_data <- original_coefs %>% filter(model == model_name)
+    marginal_plot_data <- marginal_coefs %>% filter(model == model_name)
+    
+    ggplot(marginal_plot_data, aes(x = term_clean)) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+      # Original in color with low opacity (left)
+      geom_point(data = original_plot_data, aes(y = estimate), 
+                 size = 2, color = color_val, alpha = 0.8,
+                 position = position_nudge(x = -0.15)) +
+      geom_errorbar(
+        data = original_plot_data,
+        aes(ymin = estimate - std.error, ymax = estimate + std.error),
+        width = 0.2, linewidth = 0.6, color = color_val, alpha = 0.3,
+        position = position_nudge(x = -0.15)
+      ) +
+      # Marginal in black (right)
+      geom_point(aes(y = estimate), size = 2, color = "black",
+                 position = position_nudge(x = 0.15)) +
+      geom_errorbar(
+        aes(ymin = estimate - std.error, 
+            ymax = estimate + std.error),
+        width = 0.2, linewidth = 0.6, color = "black",
+        position = position_nudge(x = 0.15)
+      ) +
+      geom_text(
+        aes(label = significance, y = star_y),
+        size = 4, color = "black", fontface = "bold", vjust = 0,
+        position = position_nudge(x = 0.15)
+      ) +
+      labs(x = NULL, y = "β") +
+      theme_minimal() +
+      coord_cartesian(clip = "off") +
+      theme(
+        aspect.ratio = 0.3,
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 8),
+        panel.grid.major.x = element_blank(),
+        plot.margin = margin(t = 15, r = 1, b = 2, l = 1)
+      )
+  }
+  
+  # Create plots for both models
+  s_gpt <- create_scatter(original_data, marginal_data, "GPT", "GPT-4.1", gpt_color)
+  s_qwen <- create_scatter(original_data, marginal_data, "Qwen", "Qwen2.5-7B-Instruct", qwen_color)
+  
+  all_coefs_original <- bind_rows(gpt_coefs_original, qwen_coefs_original)
+  all_coefs_marginal <- bind_rows(gpt_coefs_marginal, qwen_coefs_marginal)
+  
+  c_gpt <- create_coef_plot(all_coefs_original, all_coefs_marginal, "GPT", gpt_color)
+  c_qwen <- create_coef_plot(all_coefs_original, all_coefs_marginal, "Qwen", qwen_color)
+  
+  # Combine scatter + coef for each model
+  col_gpt <- (s_gpt / c_gpt) + plot_layout(heights = c(3, 1))
+  col_qwen <- (s_qwen / c_qwen) + plot_layout(heights = c(3, 1))
+  
+  # Combine side by side
+  final_plot <- col_qwen | col_gpt 
+  
+  # Save
+  ggsave(output_path, plot = final_plot, height = 5, width = 10, dpi = 300)
+  
+  return(list(
+    gpt_coefs_original = gpt_coefs_original,
+    qwen_coefs_original = qwen_coefs_original,
+    gpt_coefs_marginal = gpt_coefs_marginal,
+    qwen_coefs_marginal = qwen_coefs_marginal
+  ))
+}
+
+# Create the comparison figure
+default_comparison_results <- create_default_selfcall_comparison(
+  bind_rows(GPT.Tamkin.response_by_prompt, Qwen.Tamkin.response_by_prompt),
+  marginal_response_data,
+  'figures/tamkin/default_selfcall_comparison.png'
+)
+
+```

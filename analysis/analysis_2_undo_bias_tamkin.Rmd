@@ -1,0 +1,483 @@
+---
+title: "analysis 2 undo race/gender bias"
+output: word_document
+date: "2025-12-10"
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE   # Don't show messages
+
+)
+
+library(tidyverse)
+library(jsonlite)
+library(purrr)
+library(stringr)
+library(lmerTest)
+library(papaja)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+library(matrixStats)
+
+```
+
+```{r load and format Tamkin data}
+source('loadAndFormatTamkinData.R')
+```
+
+```{r tamking prompts stats}
+
+# ------------------------------------------------------------------------------
+# Function to fit models and extract stats for any model
+# ------------------------------------------------------------------------------
+extract_model_stats <- function(data, model_name) {
+  # Fit models for each prompt
+  model_results <- data %>%
+    group_by(prompt) %>%
+    do(
+      m1 = lm(response ~ removed_response, data = .),
+      m2 = lm(response ~ removed_response + gender, data = .),    
+      m3 = lm(response ~ removed_response + race, data = .), 
+      m4 = lm(response ~ removed_response + gender + race, data = .)
+    ) %>%
+    ungroup()
+  
+  # Extract beta coefficients for removed_response from Model 1
+  beta_stats <- model_results %>%
+    mutate(tidy_m1 = map(m1, broom::tidy)) %>%
+    select(prompt, tidy_m1) %>%
+    unnest(tidy_m1) %>%
+    filter(term == "removed_response") %>%
+    mutate(
+      beta_formatted = sprintf("%.2f", estimate),
+      p_formatted = case_when(
+        p.value < .001 ~ "<.001",
+        p.value < .01 ~ "<.01",
+        p.value < .05 ~ "<.05",
+        TRUE ~ sprintf("=%.3f", p.value)
+      )
+    ) %>%
+    select(prompt, beta_formatted, p_formatted)
+  
+  # Likelihood ratio tests
+  lrt_stats <- model_results %>%
+    mutate(
+      ll1 = map_dbl(m1, ~as.numeric(logLik(.))),
+      ll2 = map_dbl(m2, ~as.numeric(logLik(.))),
+      ll3 = map_dbl(m3, ~as.numeric(logLik(.))),
+      ll4 = map_dbl(m4, ~as.numeric(logLik(.))),
+      
+      df1 = map_dbl(m1, ~attr(logLik(.), "df")),
+      df2 = map_dbl(m2, ~attr(logLik(.), "df")),
+      df3 = map_dbl(m3, ~attr(logLik(.), "df")),
+      df4 = map_dbl(m4, ~attr(logLik(.), "df")),
+      
+      # M1 vs M2
+      chisq_m2 = -2 * (ll1 - ll2),
+      df_diff_m2 = df2 - df1,
+      p_value_m2 = pchisq(chisq_m2, df = df_diff_m2, lower.tail = FALSE),
+      
+      # M1 vs M3
+      chisq_m3 = -2 * (ll1 - ll3),
+      df_diff_m3 = df3 - df1,
+      p_value_m3 = pchisq(chisq_m3, df = df_diff_m3, lower.tail = FALSE),
+      
+      # M1 vs M4
+      chisq_m4 = -2 * (ll1 - ll4),
+      df_diff_m4 = df4 - df1,
+      p_value_m4 = pchisq(chisq_m4, df = df_diff_m4, lower.tail = FALSE)
+    ) %>%
+    mutate(
+      p_formatted_m2 = case_when(
+        p_value_m2 < .001 ~ "<.001",
+        p_value_m2 < .01 ~ "<.01",
+        p_value_m2 < .05 ~ "<.05",
+        TRUE ~ sprintf("=%.3f", p_value_m2)
+      ),
+      lrt_m2 = sprintf("χ²(%d)=%.2f, p%s", df_diff_m2, chisq_m2, p_formatted_m2),
+      
+      p_formatted_m3 = case_when(
+        p_value_m3 < .001 ~ "<.001",
+        p_value_m3 < .01 ~ "<.01",
+        p_value_m3 < .05 ~ "<.05",
+        TRUE ~ sprintf("=%.3f", p_value_m3)
+      ),
+      lrt_m3 = sprintf("χ²(%d)=%.2f, p%s", df_diff_m3, chisq_m3, p_formatted_m3),
+      
+      p_formatted_m4 = case_when(
+        p_value_m4 < .001 ~ "<.001",
+        p_value_m4 < .01 ~ "<.01",
+        p_value_m4 < .05 ~ "<.05",
+        TRUE ~ sprintf("=%.3f", p_value_m4)
+      ),
+      lrt_m4 = sprintf("χ²(%d)=%.2f, p%s", df_diff_m4, chisq_m4, p_formatted_m4)
+    ) %>%
+    select(prompt, lrt_m2, lrt_m3, lrt_m4)
+  
+  # Combine stats
+  all_stats <- beta_stats %>%
+    left_join(lrt_stats, by = "prompt") %>%
+    mutate(model = model_name)
+  
+  return(all_stats)
+}
+
+# ------------------------------------------------------------------------------
+# Extract stats for both models
+# ------------------------------------------------------------------------------
+qwen_stats <- extract_model_stats(Qwen.Tamkin.response_by_prompt, "Qwen")
+gpt_stats <- extract_model_stats(GPT.Tamkin.response_by_prompt, "GPT")
+
+# Combine
+all_stats <- bind_rows(qwen_stats, gpt_stats)
+
+# ------------------------------------------------------------------------------
+# Helper function to get stat for inline use
+# ------------------------------------------------------------------------------
+get_stat <- function(model_name, prompt_name, stat_name) {
+  all_stats %>%
+    filter(model == model_name, prompt == prompt_name) %>%
+    pull(!!sym(stat_name))
+}
+
+```
+
+
+```{r debiasing figure}
+
+
+# Main function to create combined plot for any model
+create_tamkin_figure <- function(data, mean_abs_diff_data, model_name, output_path) {
+  
+ # Fit models and extract coefficients for each prompt
+get_coefs_for_prompt <- function(data, prompt_name) {
+  df <- data %>% filter(prompt == prompt_name)
+  m4 <- lm(response ~ removed_response + gender + race, data = df)
+  
+  tidy(m4) %>%
+    filter(term %in% c("genderfemale", "raceBlack", "raceHispanic", "raceAsian")) %>%
+    mutate(
+      prompt = prompt_name,
+      model = model_name,
+      term_clean = case_when(
+        term == "genderfemale" ~ "Female",
+        term == "raceBlack" ~ "Black",
+        term == "raceHispanic" ~ "Hispanic",
+        term == "raceAsian" ~ "Asian"
+      ),
+      term_clean = factor(term_clean, levels = c("Female", "Black", "Hispanic", "Asian")),
+      significance = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01 ~ "**",
+        p.value < 0.05 ~ "*",
+        TRUE ~ ""
+      ),
+      star_y = estimate + std.error + 0.05 * max(abs(estimate))
+    )
+}
+
+# Get coefficients for all prompts INCLUDING default
+prompts <- c('dont_discriminate', 'ignore', 'remove_in_context', 'if_you_didnt_know', 'default')
+all_coefs <- map_df(prompts, ~get_coefs_for_prompt(data, .x))
+
+# Extract default coefficients for reference
+default_coefs <- all_coefs %>% 
+  filter(prompt == "default") %>%
+  select(term_clean, estimate_default = estimate, std.error_default = std.error)
+
+create_coef_plot <- function(coef_data, prompt_name, default_ref, prompt_color) {
+  plot_data <- coef_data %>%
+    filter(prompt == prompt_name) %>%
+    left_join(default_ref, by = "term_clean")
+  
+  ggplot(plot_data, aes(x = term_clean)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    # Add default condition in gray (normal opacity)
+    geom_point(aes(y = estimate_default), size = 2, color = "gray50", alpha=0.5, 
+               position = position_nudge(x = -0.18)) +
+    geom_errorbar(
+      aes(ymin = estimate_default - std.error_default, 
+          ymax = estimate_default + std.error_default),
+      width = 0.2,
+      linewidth = 0.6,
+      color = "gray50",
+      alpha=0.5, 
+      position = position_nudge(x = -0.18)
+    ) +
+    # Main prompt coefficients in condition color
+    geom_point(aes(y = estimate), size = 2, color = prompt_color) +
+    geom_errorbar(
+      aes(ymin = estimate - std.error, 
+          ymax = estimate + std.error),
+      width = 0.2,
+      linewidth = 0.6,
+      color = prompt_color
+    ) +
+    geom_text(
+      aes(label = significance, y = star_y),
+      size = 4,
+      color = prompt_color,
+      fontface = "bold",
+      vjust = 0
+    ) +
+    labs(x = NULL, y = "β") +
+    theme_minimal() +
+    coord_cartesian(clip = "off") +
+    theme(
+      aspect.ratio = 0.3,
+      axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+      axis.title.y = element_text(size = 8),
+      panel.grid.major.x = element_blank(),
+      plot.margin = margin(t = 15, r = 1, b = 2, l = 1)
+    )
+}
+
+
+
+
+  
+  # Function to create scatter plot
+  create_scatter <- function(data, prompt_name, prompt_label, color_val) {
+    data %>%
+      filter(prompt == prompt_name) %>%
+      ggplot(aes(x = removed_response, y = response)) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+      geom_hline(yintercept = 0, linetype = "solid", color = "gray30") +
+      geom_vline(xintercept = 0, linetype = "solid", color = "gray30") +
+      geom_point(color = color_val, alpha = 0.4) +
+      geom_smooth(method = "lm", se = TRUE, linewidth = 0.8, color = color_val) +
+      labs(
+        title = prompt_label,
+        x = "Blind to race and gender",
+        y = "With Debiasing Intervention"
+      ) +
+      theme_minimal() +
+      theme(
+        aspect.ratio = 1,
+        strip.text = element_text(size = 10, face = "bold"),
+        plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+        plot.margin = margin(3, 1, 1, 1)
+      )
+  }
+  
+  # Create all scatter plots
+  s1 <- create_scatter(data, "dont_discriminate", "Don't Discriminate", "#377EB8")
+  s2 <- create_scatter(data, "ignore", "Ignore", "#4DAF4A")
+  s3 <- create_scatter(data, "remove_in_context", "Remove in Context", "#E41A1C")
+  s4 <- create_scatter(data, "if_you_didnt_know", "If You Didn't Know", "#984EA3")
+  
+  # Create all coefficient plots with default reference and condition colors
+  c1 <- create_coef_plot(all_coefs, "dont_discriminate", default_coefs, "#377EB8")  # Blue
+  c2 <- create_coef_plot(all_coefs, "ignore", default_coefs, "#4DAF4A")              # Green
+  c3 <- create_coef_plot(all_coefs, "remove_in_context", default_coefs, "#E41A1C")  # Red
+  c4 <- create_coef_plot(all_coefs, "if_you_didnt_know", default_coefs, "#984EA3")  # Purple
+    
+  # Combine scatter + coef for each prompt
+  col1 <- (s1 / c1) + plot_layout(heights = c(3, 1))
+  col2 <- (s2 / c2) + plot_layout(heights = c(3, 1))
+  col3 <- (s3 / c3) + plot_layout(heights = c(3, 1))
+  col4 <- (s4 / c4) + plot_layout(heights = c(3, 1))
+  
+  # Arrange in 2x2 grid
+  p1_with_coefs <- (col1 | col2) / (col3 | col4)
+  
+  # Barplot
+  p2 <- mean_abs_diff_data %>%
+    filter(prompt %in% c('if_you_didnt_know', 'ignore', 'dont_discriminate', 'default', 'remove_in_context')) %>%
+    ggplot(aes(x = prompt, y = mean_abs_diff, fill = prompt)) +
+    geom_bar(stat = "identity", alpha = 1) +
+    geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff, 
+                      ymax = mean_abs_diff + se_abs_diff),
+                  width = 0.2, linewidth = 0.8) +
+    geom_text(
+      aes(
+        y = 0.3,
+        label = case_when(
+          prompt == "default" ~ "Default",
+          prompt == "ignore" ~ "Ignore",
+          prompt == "dont_discriminate" ~ "Don't Discriminate",
+          prompt == "if_you_didnt_know" ~ "If You Didn't Know",
+          prompt == "remove_in_context" ~ "Remove in Context"
+        )
+      ),
+      hjust = 0,
+      size = 3.5,
+      fontface = "bold",
+      color = "white"
+    ) +
+    scale_fill_manual(
+      values = c(
+        "default" = "gray50",
+        "dont_discriminate" = "#377EB8",
+        "ignore" = "#4DAF4A",
+        "if_you_didnt_know" = "#984EA3",
+        "remove_in_context" = "#E41A1C"
+      )
+    ) +
+    scale_y_continuous(
+      expand = c(0, 0), 
+      limits = c(0, max(mean_abs_diff_data %>% 
+                        filter(prompt %in% c('if_you_didnt_know', 'ignore', 'dont_discriminate', 'default', 'remove_in_context')) %>%
+                        pull(mean_abs_diff)) * 1.1)
+    ) +
+    labs(x = NULL, y = "mean absolute difference from true blindness") +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      plot.title = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid.major.y = element_blank()
+    )
+  
+  # Combine
+  # Arrange in 2x2 grid with reduced spacing
+ combined_plot <- wrap_elements(p1_with_coefs) / 
+  (plot_spacer() + p2 + plot_spacer() + plot_layout(widths = c(1, 5, 1))) + 
+  plot_layout(heights = c(5, 1))
+
+  
+  # Save plot
+  ggsave(output_path, plot = combined_plot, height = 10, width = 6, dpi = 300)
+  
+  # Return coefficients for reporting
+  return(all_coefs)
+}
+
+# Generate figures and store coefficients
+gpt_coefs <- create_tamkin_figure(
+  GPT.Tamkin.response_by_prompt, 
+  GPT.Tamkin.mean_abs_diff,
+  "GPT-4.1",
+  'figures/tamkin/GPT4.1/combined_scatter_coef_barplot.svg'
+)
+
+qwen_coefs <- create_tamkin_figure(
+  Qwen.Tamkin.response_by_prompt, 
+  Qwen.Tamkin.mean_abs_diff,
+  "Qwen2.5-7B-Instruct",
+  'figures/tamkin/Qwen2.5-7B/combined_scatter_coef_barplot.svg'
+)
+
+# Combine all coefficients for easy access
+all_tamkin_coefs <- bind_rows(gpt_coefs, qwen_coefs)
+
+# View all coefficients
+print(all_tamkin_coefs)
+
+# Example: Get specific coefficient for inline reporting
+# GPT-4.1, default prompt, female coefficient:
+gpt_coefs %>% 
+  filter(prompt == "dont_discriminate", term == "genderfemale") %>%
+  pull(estimate) %>% round(2)
+```
+
+
+Having established the existence of race and gender biases relative to a state of gender- and race-blindness, we asked whether they can be mitigated by instructing the model to avoid them. Following @tamkin, we started with testing three interventions: instructing the model not to discriminate based on race or gender, to ignore race and gender information, or to estimate what decision it would have made had it not known the person's race and gender. These manipulations partly mitigated race and gender biases, but not fully. Both models remained biased in favour of Black individuals in all three interventions, and Qwen's bias in favour of females persisted when asked to ignore or to estimate what it would have responded without race and gender information (all p's <0.05; see Fig. X). 
+
+While the three interventions had a positive effect on the models' biases (even if they did not fully eradicate them), by other measures of decision quality they made things worse.  The mean absolute difference between the model's response with and without gender and race information was `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` (SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`) for Qwen and  `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` (SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`) for GPT. Instructing the model not to discriminate only made things worse according to this measure (mean absolute error for Qwen: `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='dont_discriminate')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='dont_discriminate')%>%pull(se_abs_diff)%>%printnum()`; for GPT: `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='dont_discriminate')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='dont_discriminate')%>%pull(se_abs_diff)%>%printnum()`) and so did instructing the model to ignore race and gender information (mean absolute error for Qwen: `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='ignore')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='ignore')%>%pull(se_abs_diff)%>%printnum()`; for GPT: `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='ignore')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='ignore')%>%pull(se_abs_diff)%>%printnum()`). Strikingly, the absolute error was even larger when the model was instructed to estimate its response had it not known the person's race and gender (mean absolute error for Qwen: `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='if_you_didnt_know')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='if_you_didnt_know')%>%pull(se_abs_diff)%>%printnum()`; for GPT: `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='if_you_didnt_know')%>%pull(mean_abs_diff)%>%printnum()`; SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='if_you_didnt_know')%>%pull(se_abs_diff)%>%printnum()`).
+
+```{r inversions }
+
+# Function to find gender bias sign flips with full stats
+find_gender_bias_sign_flips <- function(data, model_name) {
+  # Calculate default bias with SE
+  default_bias <- data %>% 
+    filter(model == model_name & prompt == 'default') %>%
+    group_by(vignette, race) %>% 
+    summarise(
+      default_bias = mean(response[gender == 'male']) - mean(response[gender == 'female']),
+      .groups = "drop"
+    )
+  
+  # Calculate bias for debiasing prompts with SE
+  response_bias <- data %>% 
+    filter(model == model_name & prompt %in% c('ignore', 'if_you_didnt_know', 'dont_discriminate')) %>%
+    group_by(vignette, race, prompt) %>% 
+    summarise(
+      response_bias = mean(response[gender == 'male']) - mean(response[gender == 'female']),
+      .groups = "drop"
+    ) %>% 
+    left_join(default_bias, by = c("vignette", "race"))
+  
+  # Filter for consistent signs across races, calculate means and SEs
+  sign_flips <- response_bias %>%
+    group_by(vignette, prompt) %>%
+    filter(
+      # Both default and response bias have consistent signs across all races
+      (all(response_bias > 0) | all(response_bias < 0)) &
+      (all(default_bias > 0) | all(default_bias < 0))
+    ) %>%
+    summarise(
+      n_races = n(),
+      default_bias_mean = mean(default_bias),
+      default_bias_se = sd(default_bias) / sqrt(n()),
+      response_bias_mean = mean(response_bias),
+      response_bias_se = sd(response_bias) / sqrt(n()),
+      .groups = "drop"
+    ) %>%
+    filter(sign(response_bias_mean) != sign(default_bias_mean)) %>%
+    mutate(
+      model = model_name,
+      # Add direction labels
+      default_favors = ifelse(default_bias_mean > 0, "male", "female"),
+      intervention_favors = ifelse(response_bias_mean > 0, "male", "female"),
+      # Format for reporting
+      default_stat = sprintf("%.2f, SE=%.2f", default_bias_mean, default_bias_se),
+      intervention_stat = sprintf("%.2f, SE=%.2f", response_bias_mean, response_bias_se)
+    ) %>%
+    select(model, vignette, prompt, 
+           default_bias_mean, default_bias_se, default_favors, default_stat,
+           response_bias_mean, response_bias_se, intervention_favors, intervention_stat,
+           n_races)
+  
+  return(sign_flips)
+}
+
+# Find sign flips for both models
+gpt_sign_flips <- find_gender_bias_sign_flips(GPT.Tamkin.response_by_prompt, "GPT")
+qwen_sign_flips <- find_gender_bias_sign_flips(Qwen.Tamkin.response_by_prompt, "Qwen")
+
+# Combine
+all_sign_flips <- bind_rows(gpt_sign_flips, qwen_sign_flips)
+
+
+
+# Example: Get stats for scenario 33
+scenario_33 <- all_sign_flips %>% filter(vignette == 33)
+
+```
+
+
+Moreover, in a subset of cases the model was originally consistently biased in favour of a group, and became biased against it following the debiasing intervention. For example, for scenario number 33 (scholarship), GPT's responses were more positive for male applicants for each of the four race categories (mean difference between male and female applicants = `r scenario_33%>%filter(model=='GPT')%>%pull(default_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='GPT')%>%pull(default_bias_se)%>%printnum()`), but turned consistently biased against male applicants when it attempted to estimate its decision had it not known the gender and race of the candidate (mean difference = `r scenario_33%>%filter(model=='GPT')%>%pull(response_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='GPT')%>%pull(response_bias_se)%>%printnum()`). Qwen showed the opposite effect for the same scenario: consistently favouring female applicants in the default case (mean difference = `r scenario_33%>%filter(model=='Qwen')%>%pull(default_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='Qwen')%>%pull(default_bias_se)%>%printnum()`) and systematically discriminating against them when instructed not to discriminate (mean difference = `r scenario_33%>%filter(model=='Qwen')%>%pull(response_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='Qwen')%>%pull(response_bias_se)%>%printnum()`). 
+
+```{r mean response}
+Qwen.Tamkin.average_response_by_prompt <- Qwen.Tamkin.response_by_prompt %>%
+  group_by(prompt, vignette) %>% 
+  summarise(response=mean(response), removed_response=mean(removed_response)) %>%
+  mutate(diff=response-removed_response)
+
+GPT.Tamkin.average_response_by_prompt <- GPT.Tamkin.response_by_prompt %>%
+  group_by(prompt, vignette) %>% 
+  summarise(response=mean(response), removed_response=mean(removed_response)) %>%
+  mutate(diff=response-removed_response)
+```
+
+Access to race and gender information also had an effect on the average model response, that is, on the marginal probability of an affirmative answer, an effect that was especially strong for scenarios in which the model tended to produce a negative response when blind to race and gender. On average, Qwen's responses were significantly more positive compared to the blinded condition when the model was given race and gender information without any intervention (`r apa_print(Qwen.Tamkin.average_response_by_prompt%>%filter(prompt=='default')%>%pull(diff)%>%t.test())$statistic`), when instructed not to discriminate (`r apa_print(Qwen.Tamkin.average_response_by_prompt%>%filter(prompt=='dont_discriminate')%>%pull(diff)%>%t.test())$statistic`), and when instructed to estimate what decision it would have made had it not known the gender and race of the individual in question (`r apa_print(Qwen.Tamkin.average_response_by_prompt%>%filter(prompt=='if_you_didnt_know')%>%pull(diff)%>%t.test())$statistic`). Both models were more positive when instructed to ignore race and gender information (Qwen: `r apa_print(Qwen.Tamkin.average_response_by_prompt%>%filter(prompt=='ignore')%>%pull(diff)%>%t.test())$statistic`; GPT: `r apa_print(GPT.Tamkin.average_response_by_prompt%>%filter(prompt=='ignore')%>%pull(diff)%>%t.test())$statistic`). In sum, while debiasing interventions mostly reduced gender and race biases, they systematically made the model's responses less similar to its responses when truly blind to gender and race information, and often changed its overall tendency to produce a "yes" response. 
+
+## An “In-Context” Blinding Manipulation Does Not Mitigate the Bias
+
+The worst intervention among the three we tested was the one in which we instructed teh model to report what it would have decided if it didn't know the race and gender of the individual in question. This intervention was not effective in unbiasing the model (even numerically increasing the gender bias for Qwen), it produced responses that were farther away from the responses given in a truly blinded state, and it made the model much more likely to respond "yes", particularly to scenarios in which it would have responded "no" when blind to race and gender. As our next step, we considered whether having access to a version of the scenario without race and gender information _in addition_ to the full version would bring models' responses closer to a state of true blindness. 
+
+To that end, we introduce the "remove in context" manipulation. Following the full (unblinded) version of the scenario, the user asked the model to rewrite the scenario by removing any explicit mention of the person’s race or gender, reminding the model to change pronouns to "they/them" and adjust articles and verb tenses as necessary. We then prefilled the model's response as the blinded version of the same scenario. The user then asked the model to "imagine that you never saw the version with race and gender that I presented earlier, and think ONLY about the redacted scenario you just wrote. Imagine that I had asked you that redacted scenario directly, and please answer the question with either ”yes” or ”no.”". We recorded the models' responses at this point of the diaglogue.
+
+This manipulation was partly successful in making the models less biased. Indeed, the fit of a model predicting models' responses was not significantly improved by the inclusion of race (Qwen: `r get_stat("Qwen", "remove_in_context", "lrt_m3")`; GPT: `r get_stat("GPT", "remove_in_context", "lrt_m3")`) or gender information (Qwen: `r get_stat("Qwen", "remove_in_context", "lrt_m2")`; GPT: `r get_stat("GPT", "remove_in_context", "lrt_m2")`). But decision quality was still poor, with a mean absolute difference of `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='remove_in_context')%>%pull(mean_abs_diff)%>%printnum()` (SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='remove_in_context')%>%pull(se_abs_diff)%>%printnum()`) for Qwen and  `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='remove_in_context')%>%pull(mean_abs_diff)%>%printnum()` (SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='remove_in_context')%>%pull(se_abs_diff)%>%printnum()`) for GPT. And the average model response was biased as well, significantly more positive than blinded for GPT (`r apa_print(GPT.Tamkin.average_response_by_prompt%>%filter(prompt=='remove_in_context')%>%pull(diff)%>%t.test())$statistic`) and significantly more negative than baseline for Qwen (`r apa_print(Qwen.Tamkin.average_response_by_prompt%>%filter(prompt=='remove_in_context')%>%pull(diff)%>%t.test())$statistic`). Having access to a "blinded" version of the scenario was not enough to make the model respond as if it never had access to race and gender information.
+

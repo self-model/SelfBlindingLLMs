@@ -1,0 +1,197 @@
+---
+title: "analysis 3 tool use"
+output: word_document
+date: "2025-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Don't show code
+  warning = FALSE,   # Don't show warnings
+  message = FALSE   # Don't show messages
+
+)
+
+library(tidyverse)
+library(jsonlite)
+library(purrr)
+library(stringr)
+library(lmerTest)
+library(papaja)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+library(matrixStats)
+
+```
+
+
+```{r load data}
+source('loadAndFormatTamkinData.R')
+source('loadAndFormatTamkinToolData.R')
+```
+
+
+```{r plot}
+# Combine the two dataframes
+all_tool_calls <- bind_rows(
+  GPT.Tamkin.tool_use_combined %>% mutate(model = "GPT", vignette = decision_question_id),
+  Qwen.Tamkin.tool_use_combined %>% mutate(model = "Qwen")
+)
+
+# Define labels and colors
+prompt_labels <- c(
+  default = "Default",
+  dont_discriminate = "Don't Discriminate",
+  ignore = "Ignore",
+  if_you_didnt_know = "If You Didn't Know",
+  removed = "Removed"
+)
+
+prompt_colors <- c(
+  default = "gray",           # Red
+  dont_discriminate = "#377EB8", # Blue
+  ignore = "#4DAF4A",            # Green
+  if_you_didnt_know = "#984EA3", # Purple
+  removed = "black"               # Gray
+)
+
+# Calculate tool use counts for GPT
+gpt_counts_df <- all_tool_calls %>%
+  filter(model == 'GPT') %>%
+  group_by(prompt) %>%
+  summarise(prop_tool_use = mean(tool_call))
+         
+# Calculate tool use counts for Qwen
+qwen_counts_df <- all_tool_calls %>%
+  filter(model == 'Qwen') %>%
+  group_by(prompt) %>%
+  summarise(prop_tool_use = mean(tool_prob))
+
+# Create GPT tool use plot
+ggplot(gpt_counts_df %>%
+         filter(prompt %in% c('default','dont_discriminate','if_you_didnt_know','ignore','removed')), aes(x = prompt, y = prop_tool_use, fill = prompt)) +
+  geom_col() +
+  scale_fill_manual(values = prompt_colors, labels = prompt_labels) +
+  scale_x_discrete(labels = prompt_labels) +
+  labs(
+    x = "",
+    y = "p(self-call)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+ggsave('figures/self-calls/GPT4.1/proportion_tool_use_Tamkin.png', height = 2.5, width = 4, dpi = 300)
+
+# Create Qwen tool use plot
+ggplot(qwen_counts_df %>%
+         filter(prompt %in% c('default','dont_discriminate','if_you_didnt_know','ignore','removed')), aes(x = prompt, y = prop_tool_use, fill = prompt)) +
+  geom_col() +
+  scale_fill_manual(values = prompt_colors, labels = prompt_labels) +
+  scale_x_discrete(labels = prompt_labels) +
+  labs(
+    x = "",
+    y = "p(self-call)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+ggsave('figures/self-calls/Qwen2.5-7B/proportion_tool_use_Tamkin.png', height = 2.5, width = 4, dpi = 300)
+
+# Calculate proportions of demographic information inclusion
+inclusion_props <- all_tool_calls %>%
+  filter(!is.na(tool_call_text)) %>%  # Only look at rows with tool calls
+  group_by(prompt, model) %>%
+  summarise(
+    n = n(),
+    prop_includes_race = mean(includes_race, na.rm = TRUE),
+    prop_includes_gender = mean(includes_gender, na.rm = TRUE),
+    prop_includes_pronouns = mean(includes_gendered_pronouns, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Reshape for plotting
+inclusion_df <- inclusion_props %>%
+  pivot_longer(
+    cols = starts_with("prop_"),
+    names_to = "inclusion_type",
+    names_prefix = "prop_",
+    values_to = "proportion"
+  ) %>%
+  mutate(
+    inclusion_type = case_when(
+      inclusion_type == "includes_race" ~ "Race",
+      inclusion_type == "includes_gender" ~ "Gender",
+      inclusion_type == "includes_pronouns" ~ "Gendered Pronouns"
+    )
+  )
+
+# GPT inclusion plot
+inclusion_df %>%
+  filter(model == 'GPT') %>%
+  filter(!prompt %in% c( "redacted")) %>%
+  ggplot(aes(x = prompt, y = proportion, 
+             color = prompt, shape = inclusion_type)) +
+  geom_point(size = 2.5, alpha = 0.8, position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = prompt_colors, labels = prompt_labels) +
+  scale_x_discrete(labels = prompt_labels) +
+  scale_shape_manual(
+    values = c("Race" = 16, "Gender" = 17, "Gendered Pronouns" = 15),
+    name = "Inclusion Type"
+  ) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    x = "",
+    y = "p(mentioned | self-call)",
+    color = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  guides(color = "none")
+
+ggsave('figures/self-calls/GPT4.1/proportion_included_Tamkin.png', height = 3, width = 4, dpi = 300)
+
+# Qwen inclusion plot
+inclusion_df %>%
+  filter(model == 'Qwen') %>%
+  filter(!prompt %in% c("redacted")) %>%
+  ggplot(aes(x = prompt, y = proportion, 
+             color = prompt, shape = inclusion_type)) +
+  geom_point(size = 2.5, alpha = 0.8, position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = prompt_colors, labels = prompt_labels) +
+  scale_x_discrete(labels = prompt_labels) +
+  scale_shape_manual(
+    values = c("Race" = 16, "Gender" = 17, "Gendered Pronouns" = 15),
+    name = "Inclusion Type"
+  ) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    x = "",
+   y = "p(mentioned | self-call)",
+   color = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  guides(color = "none")
+
+ggsave('figures/self-calls/Qwen2.5-7B/proportion_included_Tamkin.png', height = 3, width = 4, dpi = 300)
+```
+
+Both models almost never self-called when gender and race information were not included in the scenario description (proportion of self-calls for Qwen: `r qwen_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`), and rarely when no debiasing instruction was given (Qwen: `r qwen_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`), but self-called reliably more when instructed to ignore race and gender information (Qwen: `r qwen_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`) or to estimate their decision had they not known the race and gender of the individual (Qwen: `r qwen_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`). Interestingly, figures for the "Don't discriminate" instruction were low (Qwen: `r qwen_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`).
+
+Focusing on the "Ignore" and "If you didn't know" prompts, GPT's self-calls never included an explicit mention of the individuals' race or gender. Qwen mostly omitted this information, but was less reliable in doing so, both for race (`r inclusion_df%>%filter(model=='Qwen' & prompt=='ignore' & inclusion_type=='Race')%>%pull(proportion)%>%printnum()` and `r inclusion_df%>%filter(model=='Qwen' & prompt=='if_you_didnt_know' & inclusion_type=='Race')%>%pull(proportion)%>%printnum()` out of all tool calls for the "Ignore" and  "If you didn't know" prompts) and for gender (`r inclusion_df%>%filter(model=='Qwen' & prompt=='ignore' & inclusion_type=='Gender')%>%pull(proportion)%>%printnum()` and `r inclusion_df%>%filter(model=='Qwen' & prompt=='if_you_didnt_know' & inclusion_type=='Gender')%>%pull(proportion)%>%printnum()`). GPT mostly omitted gender-neutral pronouns, but failed to do so on `r inclusion_df%>%filter(model=='GPT' & prompt=='ignore' & inclusion_type=='Gendered Pronouns')%>%pull(proportion)%>%printnum()` when instructed to ignore and `r inclusion_df%>%filter(model=='GPT' & prompt=='if_you_didnt_know' & inclusion_type=='Gendered Pronouns')%>%pull(proportion)%>%printnum()` when instructed to estimate its decision if it didn't know the individual's gender and race. These figures were `r inclusion_df%>%filter(model=='Qwen' & prompt=='ignore' & inclusion_type=='Gendered Pronouns')%>%pull(proportion)%>%printnum()` and `r inclusion_df%>%filter(model=='Qwen' & prompt=='if_you_didnt_know' & inclusion_type=='Gendered Pronouns')%>%pull(proportion)%>%printnum()`, respectively, for Qwen. Together, we find that the two models made strategic use of self-calling to simulate a state of ignorance.
+
