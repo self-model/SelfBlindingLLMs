@@ -22,7 +22,7 @@ Raw data are available in [...]
 
 ## Analysis Scripts
 
-Analysis scripts are available in [...]
+Analysis scripts are available in the 'analysis' subdirectory. 
 
 ## LLM prompting scripts
 
