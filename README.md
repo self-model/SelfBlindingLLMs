@@ -2,7 +2,7 @@
 
 # Self-Blinding and Counterfactual Self-Simulation Mitigate Biases and Sycophancy in Large Language Models
 
-Brian Christian 😣 Matan Mazor 🫣
+### Brian Christian 😣 Matan Mazor 🫣
 
 <img src="docs/figures/schema.png" alt="Self-blinding and debiasing. (A) Blindfolded Lady Justice (on the Gerechtigkeitsbrunnen in Bern, Switzerland; source: Wikipedia). (B) Simulated self-blinding via a schematic self-model. (C) Simulated self-blinding via self-calling." width="700"/>
 
