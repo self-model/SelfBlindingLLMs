@@ -12,7 +12,7 @@ LLMs, like humans, struggle to ignore potentially biasing information, and stand
 
 ## Datasets
 
-Our experiments use two datasets: one for assessing demographic bias (adapted from https://huggingface.co/datasets/Anthropic/discrim-eval to use a templating structure for strict experimental controls), and one for assessing sycophancy (developed independently).
+Our experiments use two datasets: one for assessing demographic bias (adapted from [Anthropic/discrim-eval](https://huggingface.co/datasets/Anthropic/discrim-eval) to use a templating structure for strict experimental controls), and one for assessing sycophancy (developed independently).
 
 Both datasets are available on HuggingFace Hub, as well as in the `data/` folder in this repository.
 
