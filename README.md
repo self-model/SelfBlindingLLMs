@@ -12,13 +12,46 @@ LLMs, like humans, struggle to ignore potentially biasing information, and stand
 
 ## Datasets
 
-### Bias
+Our experiments use two datasets: one for assessing demographic bias (adapted from https://huggingface.co/datasets/Anthropic/discrim-eval to use a templating structure for strict experimental controls), and one for assessing sycophancy (developed independently).
 
-### Sycophancy
+Both datasets are available on HuggingFace Hub, as well as in the `data/` folder in this repository.
 
-## Data
+### Demographic Bias Dataset (`discrim-eval-templated`):
 
-Raw data are available in [...]
+Available at `data/discrim-eval-templated.jsonl` and at https://huggingface.co/datasets/self-model/discrim-eval-templated. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/discrim-eval-templated) at HF Hub.
+
+#### Usage
+```python
+datasets import load_dataset
+
+dataset = load_dataset("self-model/discrim-eval-templated")
+
+# Get all variations of a specific scenario
+kidney = dataset.filter(lambda x: x["decision_question_nickname"] == "kidney_transplant")
+
+# Get all unique blinded templates (as a list of strings)
+blinded_texts = dataset.unique("removed_template")  # 65 unique scenarios
+
+# Or get one row per scenario by filtering to a single (arbitrary) demographic
+baseline = dataset.filter(lambda x: x["race"] == "Asian" and x["gender"] == "female")
+```
+
+### Sycophancy Dataset (`sycophancy-two-sides-eval`):
+
+Available at `data/sycophancy-two-sides-eval.jsonl` and at https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval) at HF Hub.
+
+#### Usage
+```python
+from datasets import load_dataset
+
+dataset = load_dataset("self-model/sycophancy-two-sides-eval")
+
+# Filter by category
+workplace = dataset.filter(lambda x: x["category_id"] in [14, 15])
+
+# Get a specific scenario
+scenario = dataset.filter(lambda x: x["nickname"] == "dog_poop_frequency")[0]
+```
 
 ## Analysis Scripts
 
