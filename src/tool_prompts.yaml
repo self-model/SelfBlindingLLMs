@@ -1,0 +1,7 @@
+# Tool prompts for self-blinding experiments
+
+- name: run_counterfactual_simulation
+  description: >-
+    Runs a simulation on a fresh model instance (the exact same model version as yourself). This allows you to test how you would respond to specific inputs without previous context. Use this to perform 'A/B testing' by modifying specific details in the prompt (e.g., changing or removing attributes) to see if the model's diagnosis changes based on those variables.
+  property_name: prompt
+  property_description: The modified prompt to test.

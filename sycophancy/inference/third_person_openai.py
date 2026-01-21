@@ -1,0 +1,742 @@
+#!/usr/bin/env python3
+"""
+Run sycophancy inference (third-person control design) via OpenAI API.
+
+Third-person control design:
+- Uses neutral letter labels (e.g., "Person D" vs "Person E") instead of "me/them"
+- Isolates primacy and content effects from sycophancy
+- P(first_position) measures primacy without sycophancy confound
+
+Design: 60 scenarios × 2 version_a_first = 120 conditions
+"""
+
+import argparse
+import json
+import math
+import os
+import random
+import sys
+import tempfile
+import time
+from dataclasses import asdict
+from pathlib import Path
+
+# Add parent directory to path for imports
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+import torch
+import torch.nn.functional as F
+from datasets import Dataset
+
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv()
+openai_client = OpenAI()
+
+# Import from sycophancy experiment module
+from sycophancy.prompts.third_person import (
+    load_scenarios,
+    generate_full_experiment,
+    ThirdPersonCondition,
+    system_prompt,
+)
+from src.batch_pool import BatchPool
+from scoring import score_letters_from_top_logprobs, get_token_variants
+
+
+# =============================================================================
+# Token Scoring (using shared scoring module)
+# =============================================================================
+
+def compute_letter_scores(top_logprobs: list, label_a: str, label_b: str) -> dict:
+    """
+    Compute letter scores from top logprobs.
+
+    Args:
+        top_logprobs: List of dicts with 'token' and 'logprob' keys
+        label_a: First letter label (e.g., "D")
+        label_b: Second letter label (e.g., "E")
+
+    Returns:
+        Dict with logits and probs for both letters
+    """
+    return score_letters_from_top_logprobs(top_logprobs, label_a, label_b)
+
+
+# =============================================================================
+# Batch API Support
+# =============================================================================
+
+def build_batch_request(custom_id: str, messages: list, model_name: str) -> dict:
+    """Build a single batch request object for the OpenAI Batch API."""
+    return {
+        "custom_id": custom_id,
+        "method": "POST",
+        "url": "/v1/chat/completions",
+        "body": {
+            "model": model_name,
+            "messages": messages,
+            "max_completion_tokens": 1,
+            "temperature": 0,
+            "logprobs": True,
+            "top_logprobs": 20,
+            "seed": 42,
+        }
+    }
+
+
+def create_batch_file(data: Dataset, model_name: str, run_idx: int = 0) -> str:
+    """
+    Create a JSONL batch file for all conditions.
+    Returns the path to the temporary file.
+
+    Args:
+        data: Dataset with conditions to score
+        model_name: OpenAI model name
+        run_idx: Run index for this replication (included in custom_id)
+    """
+    fd, batch_file_path = tempfile.mkstemp(suffix='.jsonl', prefix=f'batch_sycophancy_third_person_run{run_idx:02d}_')
+
+    with os.fdopen(fd, 'w') as f:
+        for idx in range(len(data)):
+            example = data[idx]
+            # letter_pair is a sorted tuple like ("D", "E")
+            letter_pair = example['letter_pair']
+            label_a = letter_pair[0]
+            label_b = letter_pair[1]
+
+            # Build messages with system prompt tailored to this condition's letters
+            messages = [
+                {"role": "system", "content": system_prompt(label_a, label_b)},
+                {"role": "user", "content": example['prompt']}
+            ]
+
+            # Encode run_idx and labels in custom_id for parsing later
+            custom_id = f"run_{run_idx:02d}__idx_{idx}__labels_{label_a}_{label_b}"
+            request = build_batch_request(custom_id, messages, model_name)
+
+            f.write(json.dumps(request) + '\n')
+
+    return batch_file_path
+
+
+def submit_batch(batch_file_path: str, description: str = None) -> str:
+    """
+    Upload batch file and create a batch job.
+    Returns the batch ID.
+    """
+    with open(batch_file_path, 'rb') as f:
+        file_obj = openai_client.files.create(file=f, purpose='batch')
+
+    print(f"  Uploaded batch file: {file_obj.id}")
+
+    batch = openai_client.batches.create(
+        input_file_id=file_obj.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h",
+        metadata={"description": description or "sycophancy third-person batch"}
+    )
+
+    print(f"  Created batch: {batch.id}")
+    return batch.id
+
+
+def wait_for_batch(batch_id: str, poll_interval: int = 30) -> dict:
+    """
+    Poll batch status until complete or failed.
+    Returns the batch object.
+    """
+    while True:
+        batch = openai_client.batches.retrieve(batch_id)
+        status = batch.status
+
+        completed = batch.request_counts.completed
+        total = batch.request_counts.total
+        failed = batch.request_counts.failed
+
+        print(f"  Batch {batch_id}: {status} ({completed}/{total} complete, {failed} failed)")
+
+        if status in ('completed', 'failed', 'expired', 'cancelled'):
+            return batch
+
+        time.sleep(poll_interval)
+
+
+def download_batch_results(batch_id: str) -> list:
+    """
+    Download and parse batch results.
+    Returns a list of (custom_id, response_dict) tuples.
+    """
+    batch = openai_client.batches.retrieve(batch_id)
+
+    if batch.status != 'completed':
+        raise RuntimeError(f"Batch {batch_id} not completed: {batch.status}")
+
+    if not batch.output_file_id:
+        raise RuntimeError(f"Batch {batch_id} has no output file")
+
+    content = openai_client.files.content(batch.output_file_id)
+
+    results = []
+    for line in content.text.strip().split('\n'):
+        if line:
+            obj = json.loads(line)
+            results.append((obj['custom_id'], obj['response']))
+
+    return results
+
+
+def parse_custom_id(custom_id: str) -> tuple:
+    """Parse custom_id to extract run_idx, idx, and labels."""
+    # Format: run_{run_idx}__idx_{idx}__labels_{label_a}_{label_b}
+    # Also supports legacy format: idx_{idx}__labels_{label_a}_{label_b}
+    parts = custom_id.split("__")
+
+    if parts[0].startswith("run_"):
+        run_idx = int(parts[0].replace("run_", ""))
+        idx = int(parts[1].replace("idx_", ""))
+        labels_part = parts[2].replace("labels_", "")
+    else:
+        # Legacy format without run_idx
+        run_idx = 0
+        idx = int(parts[0].replace("idx_", ""))
+        labels_part = parts[1].replace("labels_", "")
+
+    label_a, label_b = labels_part.split("_")
+    return run_idx, idx, label_a, label_b
+
+
+def parse_batch_response(response: dict, label_a: str, label_b: str) -> dict:
+    """
+    Parse a single batch response and compute letter scores.
+    """
+    if response.get('status_code') != 200:
+        raise ValueError(f"Request failed with status {response.get('status_code')}: {response.get('error')}")
+
+    body = response['body']
+    choice = body['choices'][0]
+    top_logprobs = choice['logprobs']['content'][0]['top_logprobs']
+
+    return compute_letter_scores(top_logprobs, label_a, label_b)
+
+
+# =============================================================================
+# Condition to Dict Conversion
+# =============================================================================
+
+def condition_to_dict(condition: ThirdPersonCondition) -> dict:
+    """Convert condition dataclass to dict, computing property values."""
+    d = asdict(condition)
+    # Add computed properties
+    d['target_tokens'] = condition.target_tokens
+    d['first_position_label'] = condition.first_position_label
+    d['second_position_label'] = condition.second_position_label
+    d['version_a_token'] = condition.version_a_token
+    return d
+
+
+# =============================================================================
+# Single API Call (for inspect mode)
+# =============================================================================
+
+def score_condition_openai(prompt: str, label_a: str, label_b: str, model_name: str) -> dict:
+    """
+    Score a single condition using direct API call.
+    """
+    messages = [
+        {"role": "system", "content": system_prompt(label_a, label_b)},
+        {"role": "user", "content": prompt}
+    ]
+
+    resp = openai_client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        max_completion_tokens=1,
+        temperature=0,
+        logprobs=True,
+        top_logprobs=20,
+        seed=42,
+    )
+
+    choice = resp.choices[0]
+    top = choice.logprobs.content[0].top_logprobs
+
+    # Convert API objects to dicts
+    top_logprobs = [{'token': c.token, 'logprob': c.logprob} for c in top]
+
+    return compute_letter_scores(top_logprobs, label_a, label_b)
+
+
+# =============================================================================
+# Inspection Mode
+# =============================================================================
+
+def inspect_condition_openai(example: dict, model_name: str) -> None:
+    """
+    Inspect a single condition: print the prompt, all top_logprobs, and letter extraction.
+    """
+    prompt = example['prompt']
+    letter_pair = example['letter_pair']
+    label_a = letter_pair[0]
+    label_b = letter_pair[1]
+
+    messages = [
+        {"role": "system", "content": system_prompt(label_a, label_b)},
+        {"role": "user", "content": prompt}
+    ]
+
+    print("\n" + "=" * 70)
+    print("PROMPT SENT TO MODEL:")
+    print("=" * 70)
+    for msg in messages:
+        role = msg.get('role', 'unknown')
+        content = msg.get('content', '')
+        print(f"\n[{role.upper()}]")
+        if len(content) > 500:
+            print(content[:500] + "...")
+        else:
+            print(content)
+    print("\n" + "-" * 70)
+
+    resp = openai_client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        max_completion_tokens=1,
+        temperature=0,
+        logprobs=True,
+        top_logprobs=20,
+        seed=42,
+    )
+
+    choice = resp.choices[0]
+    generated_token = choice.message.content
+    top = choice.logprobs.content[0].top_logprobs
+
+    print(f"GENERATED TOKEN: {generated_token!r}")
+    print("-" * 70)
+
+    print("\nALL TOP LOGPROBS (k=20):")
+    print(f"{'Rank':<6} {'Token':<20} {'Logprob':<12} {'Prob':<12} {'Match?':<10}")
+    print("-" * 60)
+
+    a_lps = []
+    b_lps = []
+    a_variants = get_token_variants(label_a)
+    b_variants = get_token_variants(label_b)
+
+    for i, cand in enumerate(top):
+        tok_raw = cand.token
+        prob = math.exp(cand.logprob)
+
+        match = ""
+        if tok_raw in a_variants or tok_raw.strip() in [label_a, label_a.lower()]:
+            a_lps.append(cand.logprob)
+            match = f"<- {label_a}"
+        elif tok_raw in b_variants or tok_raw.strip() in [label_b, label_b.lower()]:
+            b_lps.append(cand.logprob)
+            match = f"<- {label_b}"
+
+        print(f"{i+1:<6} {tok_raw!r:<20} {cand.logprob:<12.4f} {prob:<12.6f} {match}")
+
+    print("\n" + "=" * 70)
+    print(f"LETTER EXTRACTION SUMMARY ({label_a}/{label_b}):")
+    print("=" * 70)
+
+    if a_lps:
+        print(f"  {label_a}: {len(a_lps)} token(s) found, logprobs = {[f'{lp:.4f}' for lp in a_lps]}")
+    else:
+        print(f"  {label_a}: NOT FOUND in top-20")
+
+    if b_lps:
+        print(f"  {label_b}: {len(b_lps)} token(s) found, logprobs = {[f'{lp:.4f}' for lp in b_lps]}")
+    else:
+        print(f"  {label_b}: NOT FOUND in top-20")
+
+    # Compute normalized probabilities using logsumexp
+    if not a_lps and not b_lps:
+        print(f"\n  WARNING: Both '{label_a}' and '{label_b}' missing from top-20!")
+        return
+
+    floor = min(c.logprob for c in top)
+    if not a_lps:
+        a_lps.append(floor - 5.0)
+        print(f"\n  {label_a} missing. Using floor penalty: {floor - 5.0:.4f}")
+    if not b_lps:
+        b_lps.append(floor - 5.0)
+        print(f"\n  {label_b} missing. Using floor penalty: {floor - 5.0:.4f}")
+
+    # logsumexp aggregation
+    a_combined = torch.logsumexp(torch.tensor(a_lps), dim=-1).item()
+    b_combined = torch.logsumexp(torch.tensor(b_lps), dim=-1).item()
+
+    print(f"\n  logsumexp({label_a}) = {a_combined:.4f}")
+    print(f"  logsumexp({label_b}) = {b_combined:.4f}")
+
+    # Softmax over combined logprobs
+    combined = torch.tensor([a_combined, b_combined])
+    probs = F.softmax(combined, dim=-1)
+    a_prob = probs[0].item()
+    b_prob = probs[1].item()
+
+    print("\n" + "-" * 70)
+    print("FINAL NORMALIZED PROBABILITIES:")
+    print(f"  P({label_a}) = {a_prob:.4f}  ({a_prob*100:.2f}%)")
+    print(f"  P({label_b}) = {b_prob:.4f}  ({b_prob*100:.2f}%)")
+
+    # Interpretation
+    first_label = example.get('first_position_label', label_a)
+    first_prob = a_prob if first_label == label_a else b_prob
+    print(f"\n  Primacy: P(first_position={first_label}) = {first_prob:.4f}")
+
+    print("=" * 70 + "\n")
+
+
+def run_inspect_mode(data: Dataset, model_name: str, n_samples: int, seed: int):
+    """Run inspection mode on a few samples."""
+    random.seed(seed)
+
+    n_samples = min(n_samples, len(data))
+    random_indices = random.sample(range(len(data)), n_samples)
+
+    print("\n" + "#" * 70)
+    print(f"# INSPECT MODE: Examining {n_samples} random examples")
+    print(f"# Model: {model_name}")
+    print(f"# Indices: {random_indices}")
+    print("#" * 70)
+
+    for idx in random_indices:
+        example = data[idx]
+
+        print("\n" + "X" * 70)
+        print(f"EXAMPLE INDEX: {idx}")
+        print("X" * 70)
+
+        # Print example metadata
+        print("\nEXAMPLE METADATA:")
+        print(f"  scenario_id: {example['scenario_id']}")
+        print(f"  scenario_nickname: {example['scenario_nickname']}")
+        print(f"  letter_pair: {example['letter_pair']}")
+        print(f"  version_a_label: {example['version_a_label']}")
+        print(f"  version_a_first: {example['version_a_first']}")
+        print(f"  first_position_label: {example['first_position_label']}")
+        print(f"  version_a_token: {example['version_a_token']}")
+
+        try:
+            inspect_condition_openai(example, model_name)
+        except Exception as e:
+            print(f"\n  ERROR: {e}")
+
+    print("\n" + "#" * 70)
+    print("# INSPECT MODE COMPLETE")
+    print("#" * 70 + "\n")
+
+
+# =============================================================================
+# Batch Inference Mode
+# =============================================================================
+
+def process_batch_results(data: Dataset, results: list, output_path: Path) -> Path:
+    """
+    Process batch results and save to file.
+
+    Args:
+        data: Original dataset with conditions
+        results: List of (custom_id, response) tuples from batch
+        output_path: Path to save results
+
+    Returns:
+        Path to saved file
+    """
+    # Convert data to list of dicts for manipulation
+    data_list = [data[i] for i in range(len(data))]
+
+    # Map results back to data
+    results_by_idx = {}
+    for custom_id, response in results:
+        run_idx, idx, label_a, label_b = parse_custom_id(custom_id)
+        results_by_idx[idx] = (response, label_a, label_b)
+
+    # Add results to data_list
+    success_count = 0
+    error_count = 0
+    for idx in range(len(data_list)):
+        if idx in results_by_idx:
+            try:
+                response, label_a, label_b = results_by_idx[idx]
+                parsed = parse_batch_response(response, label_a, label_b)
+                data_list[idx].update(parsed)
+                success_count += 1
+            except Exception as e:
+                print(f"\n  Warning: Failed to parse response for idx {idx}: {e}")
+                error_count += 1
+        else:
+            print(f"\n  Warning: No result for idx {idx}")
+            error_count += 1
+
+    # Add derived columns
+    for item in data_list:
+        if 'label_a_prob' in item:
+            # letter_pair is sorted alphabetically, label_a_prob corresponds to letter_pair[0]
+            letter_pair = item['letter_pair']
+            label_a = letter_pair[0]
+            first_label = item['first_position_label']
+            item['first_position_prob'] = item['label_a_prob'] if first_label == label_a else item['label_b_prob']
+            # version_a_prob is the prob of the token assigned to version A
+            version_a_label = item['version_a_label']
+            item['version_a_prob'] = item['label_a_prob'] if version_a_label == label_a else item['label_b_prob']
+
+    # Save results
+    result_data = Dataset.from_list(data_list)
+    result_data.to_json(str(output_path), orient='records', lines=True, force_ascii=False)
+
+    return output_path
+
+
+def run_batch_inference(data: Dataset, args) -> list[Path]:
+    """
+    Run inference using OpenAI Batch API with parallel batch pool.
+
+    Args:
+        data: Dataset with conditions to score
+        args: CLI arguments
+
+    Returns:
+        List of output file paths (one per successful run)
+    """
+    from datetime import datetime
+
+    model_nickname = args.openai_model.replace('/', '_')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    n_times = args.n_times
+    parallel_batches = args.parallel_batches
+
+    print("=" * 60)
+    print(f"BATCH MODE")
+    print(f"Model:           {args.openai_model}")
+    print(f"Conditions:      {len(data)}")
+    print(f"Replications:    {n_times}")
+    print(f"Parallel batches: {parallel_batches}")
+    print(f"Output dir:      {output_dir}")
+    print("=" * 60)
+
+    # Track output files for each run
+    output_files: dict[int, Path] = {}  # run_idx -> output_path
+    batch_files: dict[int, str] = {}  # run_idx -> batch_file_path
+
+    # Create batch files for all runs
+    print(f"\nCreating {n_times} batch files...")
+    for run_idx in range(n_times):
+        batch_file_path = create_batch_file(data, args.openai_model, run_idx=run_idx)
+        batch_files[run_idx] = batch_file_path
+        output_files[run_idx] = output_dir / f"{timestamp}_sycophancy_third_person_{model_nickname}_run{run_idx:02d}.jsonl"
+
+    print(f"  Created {len(batch_files)} batch files")
+
+    # Define callbacks
+    def on_complete(job, results):
+        """Handle completed batch: save results to file."""
+        run_idx = job.metadata['run_idx']
+        output_path = output_files[run_idx]
+        process_batch_results(data, results, output_path)
+
+        # Cleanup temp batch file
+        try:
+            os.unlink(job.file_path)
+        except:
+            pass
+
+    def on_fail(job, error):
+        """Handle failed batch: rename output file with -FAILED suffix."""
+        run_idx = job.metadata['run_idx']
+        output_path = output_files[run_idx]
+        failed_path = output_path.with_suffix('.jsonl-FAILED')
+        # Create empty failed marker file
+        failed_path.write_text(f"Batch failed: {error}\n")
+        output_files[run_idx] = failed_path
+        print(f"\n  Run {run_idx} failed: {error}")
+
+        # Cleanup temp batch file
+        try:
+            os.unlink(job.file_path)
+        except:
+            pass
+
+    # Create and run batch pool
+    pool = BatchPool(
+        openai_client=openai_client,
+        max_concurrent=parallel_batches,
+        poll_interval=args.batch_poll_interval,
+        on_complete=on_complete,
+        on_fail=on_fail,
+        description=f"sycophancy_third_person_{model_nickname}",
+    )
+
+    # Add all jobs
+    for run_idx in range(n_times):
+        pool.add_job(batch_files[run_idx], metadata={'run_idx': run_idx})
+
+    # Run pool
+    print()
+    summary = pool.run()
+
+    # Collect successful output files
+    successful_files = [
+        path for path in output_files.values()
+        if path.suffix == '.jsonl' and path.exists()
+    ]
+
+    print("\n" + "=" * 60)
+    print("BATCH MODE COMPLETE")
+    print(f"Successful runs: {summary['completed']}/{summary['total']}")
+    print(f"Output files: {len(successful_files)}")
+    for f in successful_files[:5]:
+        print(f"  {f.name}")
+    if len(successful_files) > 5:
+        print(f"  ... and {len(successful_files) - 5} more")
+    print("=" * 60)
+
+    return successful_files
+
+
+# =============================================================================
+# Synchronous Inference Mode
+# =============================================================================
+
+def run_sync_inference(data: Dataset, args) -> Path:
+    """
+    Run inference using synchronous API calls.
+    """
+    model_nickname = args.openai_model.replace('/', '_')
+
+    # Output filename
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_filename = output_dir / f"{timestamp}_sycophancy_third_person_{model_nickname}.jsonl"
+
+    print("=" * 60)
+    print(f"SYNC MODE")
+    print(f"Model:        {args.openai_model}")
+    print(f"Output:       {output_filename}")
+    print(f"Conditions:   {len(data)}")
+    print("=" * 60)
+
+    def score_fn(example):
+        letter_pair = example['letter_pair']
+        label_a = letter_pair[0]
+        label_b = letter_pair[1]
+        try:
+            result = score_condition_openai(
+                example['prompt'],
+                label_a,
+                label_b,
+                args.openai_model
+            )
+            # Add derived columns
+            first_label = example['first_position_label']
+            result['first_position_prob'] = result['label_a_prob'] if first_label == label_a else result['label_b_prob']
+            version_a_label = example['version_a_label']
+            result['version_a_prob'] = result['label_a_prob'] if version_a_label == label_a else result['label_b_prob']
+            return result
+        except Exception as e:
+            print(f"Error scoring condition: {e}")
+            time.sleep(1)
+            result = score_condition_openai(
+                example['prompt'],
+                label_a,
+                label_b,
+                args.openai_model
+            )
+            first_label = example['first_position_label']
+            result['first_position_prob'] = result['label_a_prob'] if first_label == label_a else result['label_b_prob']
+            version_a_label = example['version_a_label']
+            result['version_a_prob'] = result['label_a_prob'] if version_a_label == label_a else result['label_b_prob']
+            return result
+
+    data = data.map(
+        score_fn,
+        batched=False,
+        load_from_cache_file=False,
+        new_fingerprint=f"{model_nickname}_sycophancy_third_person",
+        desc="Scoring letters for third-person conditions"
+    )
+
+    # Save results
+    data.to_json(str(output_filename), orient='records', lines=True, force_ascii=False)
+    print(f"\nSaved to {output_filename}")
+
+    return output_filename
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Run sycophancy third-person inference via OpenAI API")
+    parser.add_argument("--openai_model", type=str,
+                        default="gpt-4.1",
+                        help="OpenAI chat model name (e.g., gpt-4o, gpt-4.1-mini)")
+    parser.add_argument("--output_dir", type=str, default="outputs/sycophancy",
+                        help="Directory for output files")
+    parser.add_argument("--inspect", action="store_true",
+                        help="Run inspection mode: show top_logprobs for a few samples and exit")
+    parser.add_argument("--inspect_n", type=int, default=3,
+                        help="Number of samples to inspect (default: 3)")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--batch", action="store_true",
+                        help="Use OpenAI Batch API for async processing (50%% cheaper, higher rate limits)")
+    parser.add_argument("--n_times", type=int, default=1,
+                        help="Number of replications to run (default: 1). Use >1 for noisy models like GPT.")
+    parser.add_argument("--parallel_batches", type=int, default=5,
+                        help="Max concurrent batches in flight (default: 5)")
+    parser.add_argument("--batch_poll_interval", type=int, default=30,
+                        help="Seconds between batch status checks (default: 30)")
+    args = parser.parse_args()
+
+    # Setup
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    # Load scenarios and generate conditions
+    print("Loading scenarios...")
+    scenarios = load_scenarios("sycophancy/sycophancy_scenarios.json")
+    print(f"  Loaded {len(scenarios)} scenarios")
+
+    print("Generating conditions...")
+    experiment = generate_full_experiment(scenarios, seed=args.seed)
+    conditions = experiment['conditions']
+    print(f"  Generated {len(conditions)} conditions")
+
+    # Convert to Dataset with computed properties
+    data = Dataset.from_list([condition_to_dict(c) for c in conditions])
+    print(f"  Created dataset with columns: {data.column_names}")
+
+    # Inspect mode
+    if args.inspect:
+        run_inspect_mode(data, args.openai_model, args.inspect_n, args.seed)
+        print("Exiting after inspect mode. Use without --inspect to run full scoring.")
+        return
+
+    # Run inference
+    if args.batch:
+        output_files = run_batch_inference(data, args)
+        if len(output_files) == 1:
+            print(f"\nOutput saved to: {output_files[0]}")
+        else:
+            print(f"\nOutput saved to {len(output_files)} files in {args.output_dir}")
+    else:
+        output_file = run_sync_inference(data, args)
+        print(f"\nOutput saved to: {output_file}")
+
+
+if __name__ == "__main__":
+    main()
