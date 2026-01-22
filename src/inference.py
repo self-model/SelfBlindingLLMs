@@ -36,7 +36,7 @@ def load_model_and_tokenizer(model_name: str, use_cache: bool = False, max_lengt
 
     # Raise exception if dtype is not supported
     if dtype == torch.bfloat16:
-        if not torch.cuda.is_bf16_supported():
+        if torch.cuda.is_available() and not torch.cuda.is_bf16_supported():
             raise RuntimeError(
                 f"CRITICAL: Model '{model_name}' requires `bfloat16` for numerical stability, "
                 f"but your GPU ({torch.cuda.get_device_name()}) does not support it.\n"
@@ -79,7 +79,7 @@ def load_model_and_tokenizer(model_name: str, use_cache: bool = False, max_lengt
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         config=config,
-        dtype=dtype,
+        torch_dtype=dtype,
         device_map={'': 0} if load_8bit else 'auto', # For quantized models, force to GPU 0 (bug where 'auto' will load to CPU)
         low_cpu_mem_usage=True,
         quantization_config=quantization_config
