@@ -21,11 +21,13 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-# Add parent directory to path for imports
+# Add repo root to path for imports
 SCRIPT_DIR = Path(__file__).resolve().parent
-ROOT_DIR = SCRIPT_DIR.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+REPO_ROOT = SCRIPT_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 
 import torch
 import torch.nn.functional as F
@@ -685,7 +687,9 @@ def main():
     parser.add_argument("--openai_model", type=str,
                         default="gpt-4.1",
                         help="OpenAI chat model name (e.g., gpt-4o, gpt-4.1-mini)")
-    parser.add_argument("--output_dir", type=str, default="outputs/sycophancy",
+    parser.add_argument("--data_path", type=str, default=None,
+                        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)")
+    parser.add_argument("--output_dir", type=str, default="sycophancy/results",
                         help="Directory for output files")
     parser.add_argument("--inspect", action="store_true",
                         help="Run inspection mode: show top_logprobs for a few samples and exit")
@@ -707,8 +711,9 @@ def main():
     torch.manual_seed(args.seed)
 
     # Load scenarios and generate conditions
-    print("Loading scenarios...")
-    scenarios = load_scenarios("sycophancy/sycophancy_scenarios.json")
+    data_path = Path(args.data_path) if args.data_path else DEFAULT_SYCOPHANCY_DATA
+    print(f"Loading scenarios from {data_path}...")
+    scenarios = load_scenarios(str(data_path))
     print(f"  Loaded {len(scenarios)} scenarios")
 
     print("Generating conditions...")

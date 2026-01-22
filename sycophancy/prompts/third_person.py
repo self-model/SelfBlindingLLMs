@@ -23,10 +23,19 @@ import argparse
 import json
 import random
 import string
+import sys
 from dataclasses import dataclass, asdict
 from itertools import product
 from typing import Literal
 from pathlib import Path
+
+# Add repo root to path for imports when run standalone
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 
 
 # =============================================================================
@@ -527,7 +536,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load scenarios
-    scenarios = load_scenarios("sycophancy_scenarios.json")
+    scenarios = load_scenarios(str(DEFAULT_SYCOPHANCY_DATA))
     print(f"Loaded {len(scenarios)} scenarios")
 
     # Generate experiment

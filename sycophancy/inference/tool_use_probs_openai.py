@@ -9,9 +9,18 @@ be biased toward the user and proactively use tools to check its reasoning?
 
 import argparse
 import json
+import sys
 from pathlib import Path
 import time
 from dataclasses import asdict
+
+# Add repo root to path for imports
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -306,7 +315,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run sycophancy tool-use inference")
     parser.add_argument("--openai_model", type=str, default="gpt-4.1",
                         help="OpenAI model name")
-    parser.add_argument("--output_dir", type=str, default="outputs/sycophancy",
+    parser.add_argument("--data_path", type=str, default=None,
+                        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)")
+    parser.add_argument("--output_dir", type=str, default="sycophancy/results",
                         help="Directory for output files")
     parser.add_argument("--tool_prompts_path", type=str, default="../../src/tool_prompts.yaml",
                         help="Path to tool descriptions YAML file")
@@ -318,13 +329,14 @@ def main():
     # -------------------------------------------------------------------------
     # Load sycophancy scenarios
     # -------------------------------------------------------------------------
-    from prompts.first_person import (
+    from sycophancy.prompts.first_person import (
         load_scenarios,
         generate_full_experiment,
         experiment_summary,
     )
 
-    scenarios = load_scenarios("sycophancy_scenarios.json")
+    data_path = Path(args.data_path) if args.data_path else DEFAULT_SYCOPHANCY_DATA
+    scenarios = load_scenarios(str(data_path))
     print(f"Loaded {len(scenarios)} scenarios")
 
     experiment = generate_full_experiment(scenarios)

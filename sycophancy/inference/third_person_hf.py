@@ -33,6 +33,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 from src.inference import load_model_and_tokenizer, get_token
 from src.scoring import score_letters_from_logits, get_token_variants
 from sycophancy.prompts.third_person import (
@@ -40,14 +41,6 @@ from sycophancy.prompts.third_person import (
     generate_full_experiment,
     ThirdPersonCondition,
 )
-
-
-# =============================================================================
-# Constants
-# =============================================================================
-
-# Default data path relative to repo root
-DEFAULT_DATA_PATH = REPO_ROOT / "data" / "sycophancy-two-sides-eval.jsonl"
 
 
 # =============================================================================
@@ -315,7 +308,7 @@ def main():
         help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)"
     )
     parser.add_argument(
-        "--output_dir", type=str, default="outputs/sycophancy",
+        "--output_dir", type=str, default="sycophancy/results",
         help="Directory for output files"
     )
     parser.add_argument(
@@ -345,7 +338,7 @@ def main():
     torch.manual_seed(args.seed)
 
     # Resolve data path
-    data_path = Path(args.data_path) if args.data_path else DEFAULT_DATA_PATH
+    data_path = Path(args.data_path) if args.data_path else DEFAULT_SYCOPHANCY_DATA
     if not data_path.exists():
         print(f"Error: Data file not found: {data_path}")
         sys.exit(1)

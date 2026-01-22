@@ -16,9 +16,18 @@ Flow:
 import argparse
 import json
 import random
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+
+# Add repo root to path for imports
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 
 import torch
 import torch.nn.functional as F
@@ -31,7 +40,7 @@ load_dotenv()
 openai_client = OpenAI()
 
 # Import system prompt constant
-from prompts.first_person import SYSTEM_PROMPT
+from sycophancy.prompts.first_person import SYSTEM_PROMPT
 
 
 # =============================================================================
@@ -106,7 +115,7 @@ def generate_removed_prompt_and_letters(condition_dict: dict, scenario) -> tuple
     Returns:
         (removed_prompt, letter_pair) where letter_pair is (version_a_label, version_b_label)
     """
-    from prompts.third_person import build_third_person_prompt, deterministic_letter_pair
+    from sycophancy.prompts.third_person import build_third_person_prompt, deterministic_letter_pair
 
     # Determine version_a_first to match presentation order
     my_version = condition_dict['my_version']
@@ -515,18 +524,19 @@ def load_tool_prompts(path: Path) -> list:
     return tool_prompts
 
 
-def prepare_data_with_removed_prompts() -> list:
+def prepare_data_with_removed_prompts(data_path: Path = None) -> list:
     """
     Load sycophancy scenarios, generate forced-choice conditions,
     and add removed_prompt (third-person version) and letter_pair to each.
     """
-    from prompts.first_person import (
+    from sycophancy.prompts.first_person import (
         load_scenarios,
         generate_full_experiment,
     )
 
     # Load scenarios
-    scenarios = load_scenarios("sycophancy_scenarios.json")
+    data_path = data_path or DEFAULT_SYCOPHANCY_DATA
+    scenarios = load_scenarios(str(data_path))
     scenario_lookup = {s.id: s for s in scenarios}
 
     print(f"Loaded {len(scenarios)} scenarios")
@@ -806,7 +816,9 @@ def main():
     )
     parser.add_argument("--openai_model", type=str, default="gpt-4.1",
                         help="OpenAI chat model name")
-    parser.add_argument("--output_dir", type=str, default="outputs/sycophancy",
+    parser.add_argument("--data_path", type=str, default=None,
+                        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)")
+    parser.add_argument("--output_dir", type=str, default="sycophancy/results",
                         help="Directory for output files")
     parser.add_argument("--tool_prompts_path", type=str, default="../../src/tool_prompts.yaml",
                         help="Path to tool prompts YAML file")
@@ -830,7 +842,8 @@ def main():
     print(f"Loaded {len(tool_prompts)} tool prompts: {[tp['name'] for tp in tool_prompts]}")
 
     # Load and prepare data
-    data = prepare_data_with_removed_prompts()
+    data_path = Path(args.data_path) if args.data_path else None
+    data = prepare_data_with_removed_prompts(data_path)
 
     # Inspection mode
     if args.inspect:
