@@ -47,7 +47,7 @@ from sycophancy.prompts.first_person import (
     SYSTEM_PROMPT,
 )
 from src.batch_pool import BatchPool
-from scoring import score_you_them_from_top_logprobs
+from src.scoring import score_you_them_from_top_logprobs
 
 
 # =============================================================================

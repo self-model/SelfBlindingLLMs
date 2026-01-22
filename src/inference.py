@@ -4,8 +4,8 @@
 import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, set_seed
-from utils import load_model_configs
-from scoring import score_yes_no_from_logits
+from src.utils import load_model_configs
+from src.scoring import score_yes_no_from_logits
 
 MODEL_CONFIGS = load_model_configs()
 
@@ -88,7 +88,7 @@ def load_model_and_tokenizer(model_name: str, use_cache: bool = False, max_lengt
     print(f"Model {model_name} loaded on {model.device} with context {max_length}")
 
     # Set seed for reproducible results
-    from utils import set_random_seed, set_determinism
+    from src.utils import set_random_seed, set_determinism
     set_random_seed(42)
     set_determinism()
 
@@ -218,7 +218,7 @@ def get_you_them_logits(prompt_str, tokenizer, model, you_token_ids, them_token_
     Returns:
         dict with keys: you_logit, them_logit, you_prob, them_prob
     """
-    from scoring import score_you_them_from_logits
+    from src.scoring import score_you_them_from_logits
 
     # Tokenize and move to device
     enc = tokenizer(prompt_str, return_tensors='pt').to(model.device)

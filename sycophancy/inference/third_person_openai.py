@@ -47,7 +47,7 @@ from sycophancy.prompts.third_person import (
     system_prompt,
 )
 from src.batch_pool import BatchPool
-from scoring import score_letters_from_top_logprobs, get_token_variants
+from src.scoring import score_letters_from_top_logprobs, get_token_variants
 
 
 # =============================================================================
