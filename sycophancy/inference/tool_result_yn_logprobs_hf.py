@@ -15,7 +15,7 @@ Flow:
 Usage:
     python model_inference_hf_tool_result_yn_logprobs.py \
         --model "Qwen/Qwen2.5-7B-Instruct" \
-        --data_path ../../data/sycophancy-two-sides-eval.jsonl \
+        --data_path ../data/sycophancy-two-sides-eval.jsonl \
         --output_dir outputs/ \
         --inspect  # Preview prompts before running
 """
@@ -461,7 +461,7 @@ def main():
     )
     parser.add_argument(
         "--data_path", type=str, default=None,
-        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)"
+        help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)"
     )
     parser.add_argument(
         "--tool_prompts_path", type=str, default=None,

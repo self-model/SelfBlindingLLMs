@@ -316,7 +316,7 @@ def main():
     parser.add_argument("--openai_model", type=str, default="gpt-4.1",
                         help="OpenAI model name")
     parser.add_argument("--data_path", type=str, default=None,
-                        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)")
+                        help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)")
     parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
                         help="Directory for output files")
     parser.add_argument("--tool_prompts_path", type=str, default="../../src/tool_prompts.yaml",

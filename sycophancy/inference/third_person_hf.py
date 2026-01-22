@@ -12,7 +12,7 @@ Design: 60 scenarios x 2 (order) x 2 (label assignment) = 240 conditions per let
 Usage:
     python model_inference_hf_third_person.py \
         --model "Qwen/Qwen2.5-1.5B-Instruct" \
-        --data_path ../../data/sycophancy-two-sides-eval.jsonl \
+        --data_path ../data/sycophancy-two-sides-eval.jsonl \
         --output_dir outputs/ \
         --inspect  # Preview prompts before running
 """
@@ -305,7 +305,7 @@ def main():
     )
     parser.add_argument(
         "--data_path", type=str, default=None,
-        help="Path to scenarios JSONL file (default: data/sycophancy-two-sides-eval.jsonl)"
+        help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)"
     )
     parser.add_argument(
         "--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
