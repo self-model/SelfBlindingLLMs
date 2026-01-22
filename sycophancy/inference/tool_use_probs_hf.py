@@ -361,7 +361,7 @@ def main():
         help="Path to tool prompts YAML file"
     )
     parser.add_argument(
-        "--output_dir", type=str, default="sycophancy/results",
+        "--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
         help="Directory for output files"
     )
     parser.add_argument(
