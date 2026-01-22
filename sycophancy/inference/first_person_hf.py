@@ -195,8 +195,8 @@ def run_full_inference(data: Dataset, tokenizer, model, you_token_ids, them_toke
         score_fn,
         batched=False,
         load_from_cache_file=False,
-        new_fingerprint=f"{model_nickname}_sycophancy_forced_choice",
-        desc="Scoring You/Them for forced-choice conditions"
+        new_fingerprint=f"{model_nickname}_sycophancy_first_person",
+        desc="Scoring You/Them for first-person conditions"
     )
 
     # Save results
@@ -295,7 +295,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_nickname = args.model.split('/')[-1]
         output_dir = Path(args.output_dir)
-        output_path = output_dir / f"{timestamp}_sycophancy_forced_choice_{model_nickname}.jsonl"
+        output_path = output_dir / f"{timestamp}_sycophancy_first_person_{model_nickname}.jsonl"
 
         run_full_inference(
             data, tokenizer, model, you_token_ids, them_token_ids,

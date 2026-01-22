@@ -99,7 +99,7 @@ def create_batch_file(data: Dataset, model_name: str, run_idx: int = 0) -> str:
         model_name: OpenAI model name
         run_idx: Run index for this replication (included in custom_id)
     """
-    fd, batch_file_path = tempfile.mkstemp(suffix='.jsonl', prefix=f'batch_sycophancy_forced_choice_run{run_idx:02d}_')
+    fd, batch_file_path = tempfile.mkstemp(suffix='.jsonl', prefix=f'batch_sycophancy_first_person_run{run_idx:02d}_')
 
     with os.fdopen(fd, 'w') as f:
         for idx in range(len(data)):
@@ -513,7 +513,7 @@ def run_batch_inference(data: Dataset, args) -> list[Path]:
     for run_idx in range(n_times):
         batch_file_path = create_batch_file(data, args.openai_model, run_idx=run_idx)
         batch_files[run_idx] = batch_file_path
-        output_files[run_idx] = output_dir / f"{timestamp}_sycophancy_forced_choice_{model_nickname}_run{run_idx:02d}.jsonl"
+        output_files[run_idx] = output_dir / f"{timestamp}_sycophancy_first_person_{model_nickname}_run{run_idx:02d}.jsonl"
 
     print(f"  Created {len(batch_files)} batch files")
 
@@ -553,7 +553,7 @@ def run_batch_inference(data: Dataset, args) -> list[Path]:
         poll_interval=args.batch_poll_interval,
         on_complete=on_complete,
         on_fail=on_fail,
-        description=f"sycophancy_forced_choice_{model_nickname}",
+        description=f"sycophancy_first_person_{model_nickname}",
     )
 
     # Add all jobs
@@ -598,7 +598,7 @@ def run_sync_inference(data: Dataset, args) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_filename = output_dir / f"{timestamp}_sycophancy_forced_choice_{model_nickname}.jsonl"
+    output_filename = output_dir / f"{timestamp}_sycophancy_first_person_{model_nickname}.jsonl"
 
     print("=" * 60)
     print(f"SYNC MODE")
@@ -619,8 +619,8 @@ def run_sync_inference(data: Dataset, args) -> Path:
         score_fn,
         batched=False,
         load_from_cache_file=False,
-        new_fingerprint=f"{model_nickname}_sycophancy_forced_choice",
-        desc="Scoring You/Them for forced-choice conditions"
+        new_fingerprint=f"{model_nickname}_sycophancy_first_person",
+        desc="Scoring You/Them for first-person conditions"
     )
 
     # Save results
@@ -635,7 +635,7 @@ def run_sync_inference(data: Dataset, args) -> Path:
 # =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Run sycophancy forced-choice inference via OpenAI API")
+    parser = argparse.ArgumentParser(description="Run sycophancy first-person inference via OpenAI API")
     parser.add_argument("--openai_model", type=str,
                         default="gpt-4.1",
                         help="OpenAI chat model name (e.g., gpt-4o, gpt-4.1-mini)")
