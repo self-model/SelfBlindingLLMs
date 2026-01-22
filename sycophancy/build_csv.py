@@ -8,6 +8,7 @@ merges datasets, and outputs a processed CSV file.
 Usage:
     python build_csv.py --model gpt-4.1
     python build_csv.py --model qwen2.5-7b-instruct
+    python build_csv.py --model gpt-4.1 --from-osf  # Load from OSF instead of local files
 """
 
 import argparse
@@ -23,6 +24,23 @@ DATA_FOLDER = Path(__file__).parent / "results"
 # The sycophancy experiments only used the "run_counterfactual_simulation" tool, but the code supports alternate tool descriptions.
 TOOL_NAME = "run_counterfactual_simulation"
 
+# OSF download URLs for each model's data files.
+# Project: https://osf.io/udk5a/
+OSF_URLS = {
+    "gpt-4.1": {
+        "first_person": "https://osf.io/download/6972a66fddebc034afe4080d/",
+        "third_person": "https://osf.io/download/6972a6a8f18888e2bfe40be8/",
+        "tool_result": "https://osf.io/download/6972a5f1e9e82ab3a12a43fc/",
+        "tool_use_probs": "https://osf.io/download/6972a57af18888e2bfe40b34/",
+    },
+    "qwen2.5-7b-instruct": {
+        "first_person": "https://osf.io/download/6972a38d363ebcb72652d6ef/",
+        "third_person": "https://osf.io/download/6972a36d7f2984f0d052d7c5/",
+        "tool_result": "https://osf.io/download/6972a36b8b38dc4cf4e407f8/",
+        "tool_use_probs": "https://osf.io/download/6972a36d1069055e4652d636/",
+    },
+}
+
 INSTRUCTION_NICKNAME_MAP = {
     "": "Default",
     "Do not be sycophantic or biased in my favor just because I'm the one asking.": "Don't Be Sycophantic",
@@ -32,23 +50,36 @@ INSTRUCTION_NICKNAME_MAP = {
 }
 
 
-def load_data(model: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load the four JSONL files for a given model."""
+def load_data(model: str, from_osf: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load the four JSONL files for a given model.
+
+    Args:
+        model: Model name (e.g., "gpt-4.1" or "qwen2.5-7b-instruct")
+        from_osf: If True, load from OSF URLs instead of local files
+    """
     is_gpt = "gpt" in model.lower()
-    model_folder = DATA_FOLDER / model
 
-    if is_gpt:
-        first_person_file = model_folder / f"sycophancy_first_person_{model}_aggregated.jsonl"
-        third_person_file = model_folder / f"sycophancy_third_person_{model}_aggregated.jsonl"
-        tool_result_file = model_folder / f"sycophancy_tool_result_{model}_aggregated.jsonl"
-        tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}_aggregated.jsonl"
+    if from_osf:
+        urls = OSF_URLS[model]
+        first_person_file = urls["first_person"]
+        third_person_file = urls["third_person"]
+        tool_result_file = urls["tool_result"]
+        tool_use_probs_file = urls["tool_use_probs"]
+        print(f"Loading data for model: {model} (from OSF)")
     else:
-        first_person_file = model_folder / f"sycophancy_first_person_{model}.jsonl"
-        third_person_file = model_folder / f"sycophancy_third_person_{model}.jsonl"
-        tool_result_file = model_folder / f"sycophancy_tool_result_{model}.jsonl"
-        tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}.jsonl"
+        model_folder = DATA_FOLDER / model
+        if is_gpt:
+            first_person_file = model_folder / f"sycophancy_first_person_{model}_aggregated.jsonl"
+            third_person_file = model_folder / f"sycophancy_third_person_{model}_aggregated.jsonl"
+            tool_result_file = model_folder / f"sycophancy_tool_result_{model}_aggregated.jsonl"
+            tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}_aggregated.jsonl"
+        else:
+            first_person_file = model_folder / f"sycophancy_first_person_{model}.jsonl"
+            third_person_file = model_folder / f"sycophancy_third_person_{model}.jsonl"
+            tool_result_file = model_folder / f"sycophancy_tool_result_{model}.jsonl"
+            tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}.jsonl"
+        print(f"Loading data for model: {model}")
 
-    print(f"Loading data for model: {model}")
     print(f"  First person: {first_person_file}")
     print(f"  Third person: {third_person_file}")
     print(f"  Tool result: {tool_result_file}")
@@ -230,8 +261,11 @@ def process_tool_use_probs(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
     df = df.copy()
     df["instruction_nickname"] = df["instruction"].map(INSTRUCTION_NICKNAME_MAP)
 
-    if is_gpt:
-        # Boolean column needs no transformation - will be aggregated later
+    if "tool_call_rate" in df.columns:
+        # OSF aggregated format - already has the rate computed
+        df["tool_use_prob"] = df["tool_call_rate"]
+    elif is_gpt:
+        # Local GPT format: boolean column needs no transformation - will be aggregated later
         df["tool_use_prob"] = df[f"made_tool_call__{TOOL_NAME}"].astype(float)
     else:
         # Qwen has direct probability
@@ -380,13 +414,18 @@ def main():
         choices=["gpt-4.1", "qwen2.5-7b-instruct"],
         help="Model to process (gpt-4.1 or qwen2.5-7b-instruct)",
     )
+    parser.add_argument(
+        "--from-osf",
+        action="store_true",
+        help="Load data from OSF (https://osf.io/udk5a/) instead of local files",
+    )
     args = parser.parse_args()
 
     model = args.model
     is_gpt = "gpt" in model.lower()
 
     # Load data
-    df_first_person, df_third_person, df_tool_result, df_tool_use_probs = load_data(model)
+    df_first_person, df_third_person, df_tool_result, df_tool_use_probs = load_data(model, from_osf=args.from_osf)
 
     # Process each dataset
     print("Processing datasets...")
