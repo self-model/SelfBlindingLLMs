@@ -22,7 +22,7 @@ Available at `data/discrim-eval-templated.jsonl` and at https://huggingface.co/d
 
 #### Usage
 ```python
-datasets import load_dataset
+from datasets import load_dataset
 
 dataset = load_dataset("self-model/discrim-eval-templated")
 
