@@ -14,11 +14,11 @@ LLMs, like humans, struggle to ignore potentially biasing information, and stand
 
 Our experiments use two datasets: one for assessing demographic bias (adapted from [Anthropic/discrim-eval](https://huggingface.co/datasets/Anthropic/discrim-eval) to use a templating structure for strict experimental controls), and one for assessing sycophancy (developed independently).
 
-Both datasets are available on HuggingFace Hub, as well as in the `data/` folder in this repository.
+Both datasets are available on HuggingFace Hub, as well as in this repository within their respective experiment folders.
 
 ### Demographic Bias Dataset (`discrim-eval-templated`):
 
-Available at `data/discrim-eval-templated.jsonl` and at https://huggingface.co/datasets/self-model/discrim-eval-templated. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/discrim-eval-templated) at HF Hub.
+Available at `demographic-bias/data/discrim-eval-templated.jsonl` and at https://huggingface.co/datasets/self-model/discrim-eval-templated. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/discrim-eval-templated) at HF Hub.
 
 #### Usage
 ```python
@@ -38,7 +38,7 @@ baseline = dataset.filter(lambda x: x["race"] == "Asian" and x["gender"] == "fem
 
 ### Sycophancy Dataset (`sycophancy-two-sides-eval`):
 
-Available at `data/sycophancy-two-sides-eval.jsonl` and at https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval) at HF Hub.
+Available at `sycophancy/data/sycophancy-two-sides-eval.jsonl` and at https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval. For more details, see the [dataset card](https://huggingface.co/datasets/self-model/sycophancy-two-sides-eval) at HF Hub.
 
 #### Usage
 ```python
@@ -53,11 +53,75 @@ workplace = dataset.filter(lambda x: x["category_id"] in [14, 15])
 scenario = dataset.filter(lambda x: x["nickname"] == "dog_poop_frequency")[0]
 ```
 
+---
+
+## Demographic Bias Experiment
+
+```
+demographic-bias/
+  data/
+    discrim-eval-templated.jsonl    # Input scenarios
+  inference/                        # (coming soon)
+  results/                          # (coming soon)
+```
+
+---
+
+## Sycophancy Experiment
+
+```
+sycophancy/
+  data/
+    sycophancy-two-sides-eval.jsonl # Input scenarios (60 two-sided disputes)
+  inference/                        # HuggingFace and OpenAI inference scripts
+    first_person_hf.py              # First-person forced-choice (You/Them)
+    first_person_openai.py
+    third_person_hf.py              # Third-person control (neutral labels)
+    third_person_openai.py
+    tool_use_probs_hf.py            # Tool-use probability measurement
+    tool_use_probs_openai.py
+    tool_result_yn_logprobs_hf.py   # Response after tool result
+    tool_result_yn_logprobs_openai.py
+  prompts/                          # Prompt generation utilities
+    first_person.py
+    third_person.py
+  results/                          # Final outputs
+    gpt-4.1/                        # Aggregated results (50 runs)
+      sycophancy_first_person_gpt-4.1_aggregated.jsonl
+      sycophancy_third_person_gpt-4.1_aggregated.jsonl
+      sycophancy_tool_result_gpt-4.1_aggregated.jsonl
+      sycophancy_tool_use_probs_gpt-4.1_aggregated.jsonl
+    qwen2.5-7b-instruct/            # Single-run results
+      sycophancy_first_person_qwen2.5-7b-instruct.jsonl
+      ...
+    sycophancy_first_person_processed_*.csv  # Merged/processed for analysis
+  config.py                         # Shared paths configuration
+  aggregate_batch_runs.py           # Aggregation script for batch runs
+```
+
+### Aggregated Results
+
+The `*_aggregated.jsonl` files in `sycophancy/results/gpt-4.1/` contain means, standard deviations, and standard errors computed across 50 independent runs, suitable for direct analysis.
+
+### Raw Batch Data (HuggingFace)
+
+The raw batch data (~100MB, 50 independent runs per experiment) is available on HuggingFace Hub at https://huggingface.co/datasets/self-model/sycophancy-results-raw.
+
+### Re-running Aggregation
+
+If you download the raw batch data and wish to re-aggregate:
+
+```bash
+python sycophancy/aggregate_batch_runs.py "sycophancy/results/<experiment_folder>"
+```
+
+This produces two files:
+- `*_aggregated.jsonl` - means across runs (same format as single run)
+- `*_all_runs.jsonl` - all rows concatenated with `run_idx` column
+
+---
+
 ## Analysis Scripts
 
-Analysis scripts are available in the 'analysis' subdirectory. 
-
-## LLM prompting scripts
-
-LLM prompting scripts are available in [...]
+Analysis scripts are available in the `analysis/` subdirectory.
 
