@@ -1,4 +1,4 @@
-Qwen.sycophancy_df <- read.csv('../results/sycophancy/sycophancy_forced_choice_processed_Qwen2.5-7B-Instruct.csv') %>%
+Qwen.sycophancy_df <- read.csv('../sycophancy/results/sycophancy_processed_qwen2.5-7b-instruct.csv') %>%
   rename(prompt=instruction_nickname) %>%
   mutate(blinded_pA = exp(blinded_model_a_logit)/
            (exp(blinded_model_a_logit)+exp(blinded_model_b_logit)),
@@ -11,7 +11,7 @@ Qwen.sycophancy_df <- read.csv('../results/sycophancy/sycophancy_forced_choice_p
          marginal_pA = blinded_pA*pA_given_A + (1-blinded_pA)*pA_given_B,
          marginal_response = log(marginal_pA)-log((1-marginal_pA)))
 
-GPT.sycophancy_df <- read.csv('../results/sycophancy/sycophancy_forced_choice_processed_gpt-4.1.csv') %>%
+GPT.sycophancy_df <- read.csv('../sycophancy/results/sycophancy_processed_gpt-4.1.csv') %>%
   rename(prompt=instruction_nickname) %>%
   mutate(blinded_pA = exp(blinded_model_a_logit)/
            (exp(blinded_model_a_logit)+exp(blinded_model_b_logit)),
