@@ -25,6 +25,9 @@ library(fs)
 library(ggplot2)
 library(matrixStats)
 
+# Create output directory
+fs::dir_create("figures/sycophancy", recurse = TRUE)
+
 ```
 
 
