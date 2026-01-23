@@ -38,8 +38,10 @@ source('loadAndFormatSycophancyData.R')
 ```{r reshape}
 
 # Reshape for scatterplots
+# Note: Round removed_response to avoid floating point precision issues in pivot_wider
 Qwen.sycophancy_wide <- Qwen.sycophancy_processed %>%
   select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
+  mutate(removed_response = round(removed_response, 14)) %>%
   pivot_wider(
     names_from = my_version,
     values_from = c(response, marginal_response),
@@ -55,6 +57,7 @@ Qwen.sycophancy_wide <- Qwen.sycophancy_processed %>%
 
 GPT.sycophancy_wide <- GPT.sycophancy_processed %>%
   select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
+  mutate(removed_response = round(removed_response, 14)) %>%
   pivot_wider(
     names_from = my_version,
     values_from = c(response, marginal_response),
