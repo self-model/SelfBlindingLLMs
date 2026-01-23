@@ -85,39 +85,37 @@ sycophancy/
   prompts/                          # Prompt generation utilities
     first_person.py
     third_person.py
-  results/                          # Final outputs
-    gpt-4.1/                        # Aggregated results (50 runs)
-      sycophancy_first_person_gpt-4.1_aggregated.jsonl
-      sycophancy_third_person_gpt-4.1_aggregated.jsonl
-      sycophancy_tool_result_gpt-4.1_aggregated.jsonl
-      sycophancy_tool_use_probs_gpt-4.1_aggregated.jsonl
-    qwen2.5-7b-instruct/            # Single-run results
-      sycophancy_first_person_qwen2.5-7b-instruct.jsonl
-      ...
-    sycophancy_first_person_processed_*.csv  # Merged/processed for analysis
-  config.py                         # Shared paths configuration
+  build_csv.py                      # Generate analysis-ready CSV from OSF data
   aggregate_batch_runs.py           # Aggregation script for batch runs
+  config.py                         # Shared paths configuration
 ```
 
-### Aggregated Results
+### Reproducing Results
 
-The `*_aggregated.jsonl` files in `sycophancy/results/gpt-4.1/` contain means, standard deviations, and standard errors computed across 50 independent runs, suitable for direct analysis.
-
-### Raw Batch Data (HuggingFace)
-
-The raw batch data (~100MB, 50 independent runs per experiment) is available on HuggingFace Hub at https://huggingface.co/datasets/self-model/sycophancy-results-raw.
-
-### Re-running Aggregation
-
-If you download the raw batch data and wish to re-aggregate:
+Generate the processed CSV directly from OSF (no local data needed):
 
 ```bash
-python sycophancy/aggregate_batch_runs.py "sycophancy/results/<experiment_folder>"
+python sycophancy/build_csv.py --model gpt-4.1
+python sycophancy/build_csv.py --model qwen2.5-7b-instruct
 ```
 
-This produces two files:
-- `*_aggregated.jsonl` - means across runs (same format as single run)
-- `*_all_runs.jsonl` - all rows concatenated with `run_idx` column
+Output: `sycophancy/results/sycophancy_processed_{model}.csv`
+
+### Experiment Data (OSF)
+
+All experiment data is hosted on OSF: **https://osf.io/udk5a/**
+
+```
+osf.io/udk5a/files/osfstorage/sycophancy/
+├── gpt-4.1/
+│   ├── *_aggregated.jsonl          # Aggregated across 50 runs (mean/std/se)
+│   ├── *_all_runs.jsonl            # Individual runs with run_idx
+│   └── raw/                        # Batch run folders
+└── Qwen2.5-7B-Instruct/
+    └── *.jsonl                     # Single-run results
+```
+
+See [`sycophancy/README.md`](sycophancy/README.md) for detailed documentation.
 
 ---
 
