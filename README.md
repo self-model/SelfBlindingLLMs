@@ -125,6 +125,16 @@ Analysis scripts are available in the `analysis/` subdirectory.
 
 ---
 
+## Requirements
+
+Python 3.10+ required. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
 ## Citation
 
 If you use this code or data, please cite:
