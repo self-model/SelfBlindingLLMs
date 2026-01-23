@@ -5,10 +5,13 @@ Data processing script for sycophancy experiment results.
 Loads raw JSONL files, normalizes columns, computes derived metrics,
 merges datasets, and outputs a processed CSV file.
 
+By default, loads data from OSF for reproducibility. Use --data-path to
+load from a local folder instead.
+
 Usage:
-    python build_csv.py --model gpt-4.1
-    python build_csv.py --model qwen2.5-7b-instruct
-    python build_csv.py --model gpt-4.1 --from-osf  # Load from OSF instead of local files
+    python build_csv.py --model gpt-4.1                      # Uses OSF (default)
+    python build_csv.py --model qwen2.5-7b-instruct          # Uses OSF (default)
+    python build_csv.py --model gpt-4.1 --data-path ./data/  # Uses local folder
 """
 
 import argparse
@@ -18,28 +21,44 @@ import numpy as np
 import pandas as pd
 
 
-DATA_FOLDER = Path(__file__).parent / "results"
+OUTPUT_FOLDER = Path(__file__).parent / "results"
 
 # Tool name for tool-use probability extraction.
 # The sycophancy experiments only used the "run_counterfactual_simulation" tool, but the code supports alternate tool descriptions.
 TOOL_NAME = "run_counterfactual_simulation"
 
-# OSF download URLs for each model's data files.
+# OSF file IDs for direct downloads.
 # Project: https://osf.io/udk5a/
-OSF_URLS = {
+# Browse: https://osf.io/udk5a/files/osfstorage -> sycophancy/{model}/
+# To verify or find updated IDs, browse the OSF project and check file properties.
+#
+# Alternative: For smaller/faster loading, use the aggregated files (1,200 rows):
+#   first_person:   6972a66fddebc034afe4080d  (*_aggregated.jsonl)
+#   third_person:   6972a6a8f18888e2bfe40be8
+#   tool_result:    6972a5f1e9e82ab3a12a43fc
+#   tool_use_probs: 6972a57af18888e2bfe40b34
+OSF_FILE_IDS = {
+    # Default: all_runs files (individual runs with run_idx column)
+    # https://osf.io/udk5a/files/osfstorage -> sycophancy/gpt-4.1/
     "gpt-4.1": {
-        "first_person": "https://osf.io/download/6972a66fddebc034afe4080d/",
-        "third_person": "https://osf.io/download/6972a6a8f18888e2bfe40be8/",
-        "tool_result": "https://osf.io/download/6972a5f1e9e82ab3a12a43fc/",
-        "tool_use_probs": "https://osf.io/download/6972a57af18888e2bfe40b34/",
+        "first_person": "6972a685f18888e2bfe40bda",  # *_forced_choice_*_all_runs.jsonl (60k rows)
+        "third_person": "6972a6abddebc034afe4081b",  # *_third_person_*_all_runs.jsonl (12k rows)
+        "tool_result": "6972a632f18888e2bfe40baa",   # *_tool_result_*_all_runs.jsonl (60k rows)
+        "tool_use_probs": "6972a5a7ddebc034afe407cf",  # *_tool_calls_*_all_runs.jsonl (60k rows)
     },
+    # https://osf.io/udk5a/files/osfstorage -> sycophancy/Qwen2.5-7B-Instruct/
+    # (Qwen has single runs, no all_runs/aggregated distinction)
     "qwen2.5-7b-instruct": {
-        "first_person": "https://osf.io/download/6972a38d363ebcb72652d6ef/",
-        "third_person": "https://osf.io/download/6972a36d7f2984f0d052d7c5/",
-        "tool_result": "https://osf.io/download/6972a36b8b38dc4cf4e407f8/",
-        "tool_use_probs": "https://osf.io/download/6972a36d1069055e4652d636/",
+        "first_person": "6972a38d363ebcb72652d6ef",  # *_forced_choice_*.jsonl
+        "third_person": "6972a36d7f2984f0d052d7c5",  # *_third_person_*.jsonl
+        "tool_result": "6972a36b8b38dc4cf4e407f8",   # *_tool_result_*.jsonl
+        "tool_use_probs": "6972a36d1069055e4652d636",  # *_tool_use_*.jsonl
     },
 }
+
+# Local file naming patterns (without model suffix, since it's in the folder name)
+# GPT uses _aggregated suffix, Qwen doesn't need it (single run)
+FILE_TYPES = ["first_person", "third_person", "tool_result", "tool_use_probs"]
 
 INSTRUCTION_NICKNAME_MAP = {
     "": "Default",
@@ -50,45 +69,75 @@ INSTRUCTION_NICKNAME_MAP = {
 }
 
 
-def load_data(model: str, from_osf: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def get_osf_url(file_id: str) -> str:
+    """Convert OSF file ID to download URL."""
+    return f"https://osf.io/download/{file_id}/"
+
+
+def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
+    """Resolve file paths for a model, either from OSF or local folder.
+
+    Args:
+        model: Model name (e.g., "gpt-4.1" or "qwen2.5-7b-instruct")
+        data_path: Optional local folder path. If None, uses OSF.
+
+    Returns:
+        Dict mapping file type to path/URL
+    """
+    is_gpt = "gpt" in model.lower()
+
+    if data_path is None:
+        # Use OSF URLs
+        file_ids = OSF_FILE_IDS[model]
+        return {ft: get_osf_url(file_ids[ft]) for ft in FILE_TYPES}
+
+    # Local folder - look for files matching expected patterns
+    folder = Path(data_path)
+    paths = {}
+
+    for file_type in FILE_TYPES:
+        # Try different naming patterns
+        candidates = [
+            # New clean format: first_person_aggregated.jsonl
+            folder / f"{file_type}_aggregated.jsonl",
+            folder / f"{file_type}.jsonl",
+            # Legacy format with model name: sycophancy_first_person_gpt-4.1_aggregated.jsonl
+            folder / f"sycophancy_{file_type}_{model}_aggregated.jsonl",
+            folder / f"sycophancy_{file_type}_{model}.jsonl",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                paths[file_type] = str(candidate)
+                break
+        else:
+            raise FileNotFoundError(
+                f"Could not find {file_type} file in {folder}. "
+                f"Tried: {[c.name for c in candidates]}"
+            )
+
+    return paths
+
+
+def load_data(model: str, data_path: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load the four JSONL files for a given model.
 
     Args:
         model: Model name (e.g., "gpt-4.1" or "qwen2.5-7b-instruct")
-        from_osf: If True, load from OSF URLs instead of local files
+        data_path: Optional local folder path. If None, loads from OSF.
     """
-    is_gpt = "gpt" in model.lower()
+    source = "OSF" if data_path is None else data_path
+    print(f"Loading data for model: {model} (from {source})")
 
-    if from_osf:
-        urls = OSF_URLS[model]
-        first_person_file = urls["first_person"]
-        third_person_file = urls["third_person"]
-        tool_result_file = urls["tool_result"]
-        tool_use_probs_file = urls["tool_use_probs"]
-        print(f"Loading data for model: {model} (from OSF)")
-    else:
-        model_folder = DATA_FOLDER / model
-        if is_gpt:
-            first_person_file = model_folder / f"sycophancy_first_person_{model}_aggregated.jsonl"
-            third_person_file = model_folder / f"sycophancy_third_person_{model}_aggregated.jsonl"
-            tool_result_file = model_folder / f"sycophancy_tool_result_{model}_aggregated.jsonl"
-            tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}_aggregated.jsonl"
-        else:
-            first_person_file = model_folder / f"sycophancy_first_person_{model}.jsonl"
-            third_person_file = model_folder / f"sycophancy_third_person_{model}.jsonl"
-            tool_result_file = model_folder / f"sycophancy_tool_result_{model}.jsonl"
-            tool_use_probs_file = model_folder / f"sycophancy_tool_use_probs_{model}.jsonl"
-        print(f"Loading data for model: {model}")
+    paths = resolve_file_paths(model, data_path)
 
-    print(f"  First person: {first_person_file}")
-    print(f"  Third person: {third_person_file}")
-    print(f"  Tool result: {tool_result_file}")
-    print(f"  Tool use probs: {tool_use_probs_file}")
+    for file_type, path in paths.items():
+        print(f"  {file_type}: {path}")
 
-    df_first_person = pd.read_json(first_person_file, lines=True)
-    df_third_person = pd.read_json(third_person_file, lines=True)
-    df_tool_result = pd.read_json(tool_result_file, lines=True)
-    df_tool_use_probs = pd.read_json(tool_use_probs_file, lines=True)
+    df_first_person = pd.read_json(paths["first_person"], lines=True)
+    df_third_person = pd.read_json(paths["third_person"], lines=True)
+    df_tool_result = pd.read_json(paths["tool_result"], lines=True)
+    df_tool_use_probs = pd.read_json(paths["tool_use_probs"], lines=True)
 
     print(f"  Loaded {len(df_first_person)} first person, {len(df_third_person)} third person, {len(df_tool_result)} tool result, {len(df_tool_use_probs)} tool use probs rows")
 
@@ -405,7 +454,8 @@ def simplify_for_export(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Process sycophancy experiment data and output CSV"
+        description="Process sycophancy experiment data and output CSV. "
+        "By default, loads data from OSF for reproducibility."
     )
     parser.add_argument(
         "--model",
@@ -415,17 +465,25 @@ def main():
         help="Model to process (gpt-4.1 or qwen2.5-7b-instruct)",
     )
     parser.add_argument(
-        "--from-osf",
-        action="store_true",
-        help="Load data from OSF (https://osf.io/udk5a/) instead of local files",
+        "--data-path",
+        type=str,
+        default=None,
+        help="Local folder containing input JSONL files. If not specified, loads from OSF.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default=None,
+        help="Output folder for processed CSV. Default: ./results/",
     )
     args = parser.parse_args()
 
     model = args.model
     is_gpt = "gpt" in model.lower()
+    output_folder = Path(args.output_path) if args.output_path else OUTPUT_FOLDER
 
     # Load data
-    df_first_person, df_third_person, df_tool_result, df_tool_use_probs = load_data(model, from_osf=args.from_osf)
+    df_first_person, df_third_person, df_tool_result, df_tool_use_probs = load_data(model, data_path=args.data_path)
 
     # Process each dataset
     print("Processing datasets...")
@@ -448,7 +506,8 @@ def main():
     df_export = simplify_for_export(df_merged, is_gpt)
 
     # Save to CSV
-    output_file = DATA_FOLDER / f"sycophancy_first_person_processed_{model}.csv"
+    output_folder.mkdir(parents=True, exist_ok=True)
+    output_file = output_folder / f"sycophancy_processed_{model}.csv"
     df_export.to_csv(output_file, index=False)
     print(f"Saved to {output_file}")
     print(f"Final shape: {df_export.shape}")
