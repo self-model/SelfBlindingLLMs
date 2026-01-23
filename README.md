@@ -125,3 +125,19 @@ This produces two files:
 
 Analysis scripts are available in the `analysis/` subdirectory.
 
+---
+
+## Citation
+
+If you use this code or data, please cite:
+
+```bibtex
+@misc{christian2026selfblinding,
+    title={Self-Blinding and Counterfactual Self-Simulation Mitigate Biases and Sycophancy in Large Language Models},
+    author={Brian Christian and Matan Mazor},
+    year={2026},
+    eprint={2601.14553},
+    archivePrefix={arXiv},
+    url={https://arxiv.org/abs/2601.14553}
+}
+```

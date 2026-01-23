@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software or dataset, please cite it as below."
+title: "Self-Blinding and Counterfactual Self-Simulation Mitigate Biases and Sycophancy in Large Language Models"
+authors:
+  - family-names: Christian
+    given-names: Brian
+  - family-names: Mazor
+    given-names: Matan
+date-released: 2026-01-21
+url: "https://github.com/self-model/SelfBlindingLLMs"
+repository-code: "https://github.com/self-model/SelfBlindingLLMs"
+license: MIT
+type: software
+identifiers:
+  - type: doi
+    value: "10.48550/arXiv.2601.14553"
+  - type: url
+    value: "https://arxiv.org/abs/2601.14553"
+preferred-citation:
+  type: misc
+  title: "Self-Blinding and Counterfactual Self-Simulation Mitigate Biases and Sycophancy in Large Language Models"
+  authors:
+    - family-names: Christian
+      given-names: Brian
+    - family-names: Mazor
+      given-names: Matan
+  year: 2026
+  doi: "10.48550/arXiv.2601.14553"
+  url: "https://arxiv.org/abs/2601.14553"
