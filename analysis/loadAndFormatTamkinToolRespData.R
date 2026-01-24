@@ -1,12 +1,13 @@
-# # Load Qwen data (single file)
+# # Load Qwen data (single file using glob pattern)
+# qwen_resp_file <- list.files("../demographic_bias/results", pattern = "_tool_result_yn.*\\.jsonl$", full.names = TRUE)[1]
 # Qwen_resp_raw <- stream_in(
-#   file("../results/tool use/Tamkin/responses/20260108_193428_explicit_prompts_Qwen2.5-7B-Instruct_tool_use_response_logprobs.jsonl"), 
+#   file(qwen_resp_file),
 #   verbose = FALSE
 # )
 # 
 # # Get all GPT run files
 # gpt_run_files <- list.files(
-#   path = "../results/tool use/Tamkin/responses/GPT",
+#   path = "../demographic_bias/results/responses/GPT",
 #   pattern = "\\.jsonl$",
 #   full.names = TRUE
 # )
@@ -117,16 +118,16 @@
 #                                           yes_logit=mean(yes_logit)))
 # 
 # GPT_resp_df %>%
-#   write.csv("../results/tool use/Tamkin/responses/GPT.csv")
+#   write.csv("../demographic_bias/results/responses/GPT.csv")
 # 
 # Qwen_resp_df %>%
-#   write.csv("../results/tool use/Tamkin/responses/Qwen.csv")
+#   write.csv("../demographic_bias/results/responses/Qwen.csv")
 # 
 # combined_resp_df %>%
-#   write.csv("../results/tool use/Tamkin/responses/combined.csv")
+#   write.csv("../demographic_bias/results/responses/combined.csv")
 
-GPT_resp_df <- read.csv("../results/tool use/Tamkin/responses/GPT.csv")
+GPT_resp_df <- read.csv("../demographic_bias/results/responses/GPT.csv")
 
-Qwen_resp_df <- read.csv("../results/tool use/Tamkin/responses/Qwen.csv")
+Qwen_resp_df <- read.csv("../demographic_bias/results/responses/Qwen.csv")
 
-combined_resp_df <- read.csv("../results/tool use/Tamkin/responses/combined.csv")
+combined_resp_df <- read.csv("../demographic_bias/results/responses/combined.csv")

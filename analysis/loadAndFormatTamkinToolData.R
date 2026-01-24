@@ -21,7 +21,9 @@ extract_tool_call <- function(generations) {
   return(NA_character_)
 }
 
-Qwen.Tamkin.tool_use_gen <- stream_in(file("../results/tool use/20260108_182450_explicit_prompts_Qwen2.5-7B-Instruct_tool_use_generations.jsonl"), verbose = FALSE) %>%
+# Find Qwen tool use generations file using glob pattern
+qwen_gen_file <- list.files("../demographic_bias/results", pattern = "_tool_use_generations.*\\.jsonl$", full.names = TRUE)[1]
+Qwen.Tamkin.tool_use_gen <- stream_in(file(qwen_gen_file), verbose = FALSE) %>%
   mutate(model = 'Qwen2.5-7B') %>%
   select(model, filled_template, decision_question_id, race, gender, 
          default, dont_discriminate, ignore, if_you_didnt_know, 
@@ -71,7 +73,9 @@ Qwen.Tamkin.tool_use_gen <- stream_in(file("../results/tool use/20260108_182450_
 
 
 
-Qwen.Tamkin.tool_use_prob <- stream_in(file("../results/tool use/20260101_010302_explicit_prompts_Qwen2.5-7B-Instruct_tool_use_probs_tamkin_rewritten.jsonl"), verbose = FALSE) %>%
+# Find Qwen tool use probs file using glob pattern
+qwen_prob_file <- list.files("../demographic_bias/results", pattern = "_tool_use_probs.*\\.jsonl$", full.names = TRUE)[1]
+Qwen.Tamkin.tool_use_prob <- stream_in(file(qwen_prob_file), verbose = FALSE) %>%
   mutate(model='Qwen2.5-7B')%>%
   # Select the columns we need
   select(model, filled_template, decision_question_id, race, gender, 
@@ -115,7 +119,7 @@ colnames(Qwen.Tamkin.tool_use_combined)
 
 # GPT
 
-GPT.Tamkin.tool_use_combined <- read.csv('../results/tool use/GPT tool calls/tool_use.csv')
+GPT.Tamkin.tool_use_combined <- read.csv('../demographic_bias/results/GPT tool calls/tool_use.csv')
 
 # 
 # # Function to extract tool call text
@@ -176,7 +180,7 @@ GPT.Tamkin.tool_use_combined <- read.csv('../results/tool use/GPT tool calls/too
 # 
 # # Get all run files
 # gpt_run_files <- list.files(
-#   path = "../results/tool use/GPT tool calls",
+#   path = "../demographic_bias/results/GPT tool calls",
 #   pattern = "run\\d+\\.jsonl$",
 #   full.names = TRUE
 # )
@@ -281,4 +285,4 @@ GPT.Tamkin.tool_use_combined <- read.csv('../results/tool use/GPT tool calls/too
 #     )
 #   )
 # 
-# gpt_tool_calls_df %>% write.csv('../results/tool use/GPT tool calls/tool_use.csv')
+# gpt_tool_calls_df %>% write.csv('../demographic_bias/results/GPT tool calls/tool_use.csv')

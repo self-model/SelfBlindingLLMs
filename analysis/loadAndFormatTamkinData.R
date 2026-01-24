@@ -1,4 +1,6 @@
-Qwen.Tamkin.YN.df <- stream_in(file('../results/Yes-No Logits/20251231_231151_explicit_prompts_Qwen2.5-7B-Instruct_yn_logits_tamkin_rewritten.jsonl'), verbose=FALSE) %>% 
+# Find Qwen yes/no file using glob pattern
+qwen_yn_file <- list.files("../demographic_bias/results", pattern = "_yn_.*Qwen.*\\.jsonl$", full.names = TRUE)[1]
+Qwen.Tamkin.YN.df <- stream_in(file(qwen_yn_file), verbose=FALSE) %>% 
   mutate(model='Qwen') %>%
   dplyr::select(-matches("relative_probs")) %>%
   pivot_longer(
@@ -45,7 +47,7 @@ Qwen.Tamkin.mean_abs_diff <- Qwen.Tamkin.response_by_prompt %>%
   arrange(-mean_abs_diff) %>%
   mutate(prompt = factor(prompt, levels = prompt))
 
-gpt_path <- "../results/Yes-No Logits/GPT-Tamkin"
+gpt_path <- "../demographic_bias/results/GPT-Tamkin"
 
 GPT.Tamkin.YN.wide.df <- list.files(gpt_path, pattern = "\\.jsonl$", full.names = TRUE) %>%
   # Convert to tibble first so we keep filename
