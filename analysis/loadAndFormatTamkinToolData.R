@@ -22,16 +22,19 @@ extract_tool_call <- function(generations) {
 }
 
 # Find Qwen tool use generations file using glob pattern
+# Note: Excludes decision_question_ids 54, 77 (inverted questions)
+# Note: Excludes redacted/redact_in_context prompts (not used in paper)
 qwen_gen_file <- list.files("../demographic_bias/results", pattern = "_tool_use_generations.*\\.jsonl$", full.names = TRUE)[1]
 Qwen.Tamkin.tool_use_gen <- stream_in(file(qwen_gen_file), verbose = FALSE) %>%
+  filter(!(decision_question_id %in% c(54, 77))) %>%
   mutate(model = 'Qwen2.5-7B') %>%
-  select(model, filled_template, decision_question_id, race, gender, 
-         default, dont_discriminate, ignore, if_you_didnt_know, 
-         remove_in_context, removed, redacted) %>%
+  select(model, filled_template, decision_question_id, race, gender,
+         default, dont_discriminate, ignore, if_you_didnt_know,
+         remove_in_context, removed) %>%
   rename(vignette = decision_question_id) %>%
   pivot_longer(
-    cols = c(default, dont_discriminate, ignore, if_you_didnt_know, 
-             remove_in_context, removed, redacted),
+    cols = c(default, dont_discriminate, ignore, if_you_didnt_know,
+             remove_in_context, removed),
     names_to = "prompt",
     values_to = "tool_data"
   ) %>%
@@ -68,41 +71,16 @@ Qwen.Tamkin.tool_use_gen <- stream_in(file(qwen_gen_file), verbose = FALSE) %>%
       str_detect(tool_call_prompt, regex("\\b(he|she|his|her|him)\\b", ignore_case = TRUE)),
       NA
     )
-  ) %>%
-  filter(!(vignette %in% c(54, 77)))
+  )
 
 
 
-# Find Qwen tool use probs file using glob pattern
-qwen_prob_file <- list.files("../demographic_bias/results", pattern = "_tool_use_probs.*\\.jsonl$", full.names = TRUE)[1]
-Qwen.Tamkin.tool_use_prob <- stream_in(file(qwen_prob_file), verbose = FALSE) %>%
-  mutate(model='Qwen2.5-7B')%>%
-  # Select the columns we need
-  select(model, filled_template, decision_question_id, race, gender, 
-         default, dont_discriminate, ignore, if_you_didnt_know, 
-         remove_in_context, removed, redact_in_context, redacted) %>%
-  rename(vignette = decision_question_id) %>%
-  # Pivot prompt columns to long format
-  pivot_longer(
-    cols = c(default, dont_discriminate, ignore, if_you_didnt_know, 
-             remove_in_context, removed, redact_in_context, redacted),
-    names_to = "prompt",
-    values_to = "tool_data"
-  ) %>%
-  # Unnest the tool data (each is already a data frame)
-  unnest_wider(tool_data) %>%
-  # Pivot tool probabilities to long format
-  pivot_longer(
-    cols = starts_with("tool_prob_with_desc___"),
-    names_to = "tool_desc",
-    names_prefix = "tool_prob_with_desc___",
-    values_to = "tool_prob"
-  ) %>%
-  # Clean up tool descriptions
-  mutate(
-    tool_desc = str_replace_all(tool_desc, "_", " ")
-  ) %>%
-  filter(!(vignette %in% c(54,77))) # inverted
+# Load Qwen tool use probabilities from merged CSV
+# Note: Excluded decision_question_ids and prompt formats are filtered in build_csv.py
+Qwen.Tamkin.tool_use_prob <- read.csv("../demographic_bias/results/demographic_bias_processed_qwen2.5-7b-instruct.csv") %>%
+  mutate(model = 'Qwen2.5-7B') %>%
+  rename(vignette = decision_question_id,
+         prompt = prompt_format)
 
 
 # Merge them

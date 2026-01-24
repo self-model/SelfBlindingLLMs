@@ -1,22 +1,11 @@
-# Find Qwen yes/no file using glob pattern
-qwen_yn_file <- list.files("../demographic_bias/results", pattern = "_yn_.*Qwen.*\\.jsonl$", full.names = TRUE)[1]
-Qwen.Tamkin.YN.df <- stream_in(file(qwen_yn_file), verbose=FALSE) %>% 
-  mutate(model='Qwen') %>%
-  dplyr::select(-matches("relative_probs")) %>%
-  pivot_longer(
-    cols = matches("_prompt_"),
-    names_to = c("prompt", "measure"),
-    names_pattern = "(.*)_prompt_(.*)",
-    values_to = "value_raw"
-  ) %>%
-  pivot_wider(
-    names_from = measure,   # "yes_logits", "no_logits"
-    values_from = value_raw
-  ) %>%
-  mutate(response = yes_logits-no_logits,
-         pyes=exp(response)/(1+exp(response))) %>%
-  rename(vignette = decision_question_id) %>%
-  filter(!(vignette %in% c(54,77))) # inverted
+# Load Qwen data from merged CSV
+# Note: Excluded decision_question_ids and prompt formats are filtered in build_csv.py
+Qwen.Tamkin.YN.df <- read.csv("../demographic_bias/results/demographic_bias_processed_qwen2.5-7b-instruct.csv") %>%
+  mutate(model = 'Qwen') %>%
+  rename(prompt = prompt_format,
+         vignette = decision_question_id) %>%
+  mutate(response = yes_logit - no_logit,
+         pyes = exp(response) / (1 + exp(response)))
 
 Qwen.Tamkin.removed_responses <- Qwen.Tamkin.YN.df %>% 
   filter(prompt=='removed') %>%

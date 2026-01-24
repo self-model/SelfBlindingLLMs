@@ -126,8 +126,18 @@
 # combined_resp_df %>%
 #   write.csv("../demographic_bias/results/responses/combined.csv")
 
-GPT_resp_df <- read.csv("../demographic_bias/results/responses/GPT.csv")
+# Load Qwen tool result data from merged CSV
+# Note: Excluded decision_question_ids and prompt formats are filtered in build_csv.py
+# The merged CSV has wide format with columns:
+#   yes_logit_when_tool_says_yes, no_logit_when_tool_says_yes,
+#   yes_logit_when_tool_says_no, no_logit_when_tool_says_no
+Qwen_resp_df <- read.csv("../demographic_bias/results/demographic_bias_processed_qwen2.5-7b-instruct.csv") %>%
+  mutate(model = "Qwen") %>%
+  rename(vignette = decision_question_id,
+         prompt = prompt_format)
 
-Qwen_resp_df <- read.csv("../demographic_bias/results/responses/Qwen.csv")
+# GPT tool result data (placeholder - update path when available)
+# GPT_resp_df <- read.csv("../demographic_bias/results/demographic_bias_processed_gpt-4.1.csv")
 
-combined_resp_df <- read.csv("../demographic_bias/results/responses/combined.csv")
+# Combined data (Qwen only for now)
+combined_resp_df <- Qwen_resp_df
