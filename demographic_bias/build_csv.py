@@ -7,14 +7,24 @@ Processes inference outputs from:
 - tool_use_probs_*.py: Tool-use probability measurement
 - tool_result_yn_logprobs_*.py: Yes/no scoring after simulated tool use
 
+By default, loads data from OSF for reproducibility. Use --data-path to
+load from a local folder instead.
+
 Usage:
-    # Convert yes/no logprobs to long format
-    python build_csv.py --in results/bias_yn_gpt-4.1.jsonl --out results/bias_yn_gpt-4.1_long.jsonl
+    # Load from OSF (default) - merged mode
+    python build_csv.py --model gpt-4.1
+    python build_csv.py --model qwen2.5-7b-instruct
 
-    # Also output CSV
-    python build_csv.py --in results/bias_yn_gpt-4.1.jsonl --out results/bias_yn_gpt-4.1_long.jsonl --out-csv results/bias_yn_gpt-4.1.csv
+    # Load from local folder
+    python build_csv.py --model gpt-4.1 --data-path ./results/
 
-    # Process tool-use results
+    # Legacy: explicit file paths
+    python build_csv.py --yn-in FILE --tool-prob-in FILE --tool-result-in FILE --out-csv OUTPUT
+
+    # Convert yes/no logprobs to long format (non-merged mode)
+    python build_csv.py --in results/bias_yn_gpt-4.1.jsonl --out results/bias_yn_gpt-4.1_long.jsonl --mode yn_logprobs
+
+    # Process tool-use results (non-merged mode)
     python build_csv.py --in results/bias_tool_use_gpt-4.1.jsonl --out results/bias_tool_use_long.jsonl --mode tool_use
 """
 
@@ -57,6 +67,123 @@ INCLUDED_PROMPT_FORMATS = {'default', 'dont_discriminate', 'ignore', 'if_you_did
 
 # Tool to include (focus on counterfactual simulation)
 INCLUDED_TOOL = 'run_counterfactual_simulation'
+
+
+# =============================================================================
+# OSF Configuration
+# =============================================================================
+
+# OSF file IDs for direct downloads.
+# Project: https://osf.io/udk5a/
+# Browse: https://osf.io/udk5a/files/osfstorage -> demographic_bias/{model}/
+OSF_FILE_IDS = {
+    "gpt-4.1": {
+        "yn_logits": "6976507b7f5caaf4d7834678",
+        "tool_prob": "6976507bfd6c714eae8345ed",
+        "tool_result": "697650794bf50c960a44fe48",
+    },
+    "qwen2.5-7b-instruct": {
+        "yn_logits": "697698ad9b49fe625065c6ab",
+        "tool_prob": "697698af53876d3356f22662",
+        "tool_result": "697698cb9b49fe625065c6b1",
+    },
+}
+
+OUTPUT_FOLDER = Path(__file__).parent / "results"
+
+# File type patterns for local file discovery
+FILE_TYPES = ["yn_logits", "tool_prob", "tool_result"]
+
+
+def get_osf_url(file_id: str) -> str:
+    """Convert OSF file ID to download URL."""
+    return f"https://osf.io/download/{file_id}/"
+
+
+def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
+    """Resolve file paths for a model, either from OSF or local folder.
+
+    Args:
+        model: Model name (e.g., "gpt-4.1" or "qwen2.5-7b-instruct")
+        data_path: Optional local folder path. If None, uses OSF.
+
+    Returns:
+        Dict mapping file type to path/URL
+    """
+    if data_path is None:
+        # Use OSF URLs
+        file_ids = OSF_FILE_IDS[model]
+        return {ft: get_osf_url(file_ids[ft]) for ft in FILE_TYPES}
+
+    # Local folder - look for files matching expected patterns
+    folder = Path(data_path)
+    paths = {}
+
+    # Pattern mappings for local files (order matters - more specific patterns first)
+    # Note: tool_use_logprobs is tool_result, not tool_prob
+    pattern_map = {
+        "yn_logits": ["yn_logits", "yn_logprobs", "bias_yn"],
+        "tool_prob": ["tool_prob", "tool_probs", "tool_use_probs", "tool_calls"],
+        "tool_result": ["tool_result", "tool_results", "tool_result_yn", "tool_use_logprobs", "response_logprobs"],
+    }
+
+    for file_type in FILE_TYPES:
+        patterns = pattern_map[file_type]
+        found = False
+
+        # Search for files matching any pattern
+        for pattern in patterns:
+            candidates = list(folder.glob(f"*{pattern}*.jsonl"))
+            if candidates:
+                # Prefer aggregated files if multiple matches
+                aggregated = [c for c in candidates if "aggregated" in c.name]
+                paths[file_type] = str(aggregated[0] if aggregated else candidates[0])
+                found = True
+                break
+
+        if not found:
+            raise FileNotFoundError(
+                f"Could not find {file_type} file in {folder}. "
+                f"Tried patterns: {patterns}"
+            )
+
+    return paths
+
+
+# =============================================================================
+# URL/File Loading Support
+# =============================================================================
+
+import tempfile
+import urllib.request
+from contextlib import contextmanager
+
+
+@contextmanager
+def open_file_or_url(path: str, encoding: str = "utf-8"):
+    """Open a local file or download from URL.
+
+    Args:
+        path: Local file path or URL
+        encoding: Text encoding (default: utf-8)
+
+    Yields:
+        File-like object for reading
+    """
+    if path.startswith("http://") or path.startswith("https://"):
+        # Download URL to temp file
+        with urllib.request.urlopen(path) as response:
+            with tempfile.NamedTemporaryFile(mode='w+b', delete=False) as tmp:
+                tmp.write(response.read())
+                tmp_path = tmp.name
+        try:
+            with open(tmp_path, 'r', encoding=encoding) as f:
+                yield f
+        finally:
+            Path(tmp_path).unlink()
+    else:
+        with open(path, 'r', encoding=encoding) as f:
+            yield f
 
 
 # =============================================================================
@@ -341,13 +468,16 @@ def iter_tool_result_yn_rows(wide_row: Dict[str, Any], row_index: int) -> Iterat
 # Merged Tool Data Processing
 # =============================================================================
 
-def detect_aggregated_format(file_path: Path) -> bool:
+def detect_aggregated_format(file_path: str) -> bool:
     """
     Detect if the file uses aggregated format (flat columns with tool_call_rate or flattened tool result).
 
+    Args:
+        file_path: Local path or URL to the file
+
     Returns True if aggregated format, False if raw format.
     """
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(file_path) as f:
         first_line = f.readline().strip()
         if not first_line:
             return False
@@ -364,16 +494,20 @@ def detect_aggregated_format(file_path: Path) -> bool:
     return False
 
 
-def load_yn_logits(yn_logits_path: Path) -> dict:
+def load_yn_logits(yn_logits_path: str) -> dict:
     """
     Load YN logits data into lookup dict.
 
     Works with both raw and aggregated formats (same column pattern).
+
+    Args:
+        yn_logits_path: Local path or URL to the file
+
     Returns: {(dq_id, race, gender, prompt_format): {metric: value}}
     """
     yn_lookup = {}
 
-    with open(yn_logits_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(yn_logits_path) as f:
         for line in f:
             row = json.loads(line.strip())
             dq_id = row.get("decision_question_id")
@@ -399,15 +533,18 @@ def load_yn_logits(yn_logits_path: Path) -> dict:
     return yn_lookup
 
 
-def load_tool_prob_nested(tool_prob_path: Path) -> dict:
+def load_tool_prob_nested(tool_prob_path: str) -> dict:
     """
     Load tool prob data from raw format (nested dicts).
+
+    Args:
+        tool_prob_path: Local path or URL to the file
 
     Returns: {(dq_id, race, gender, prompt_format): tool_prob}
     """
     tool_prob_lookup = {}
 
-    with open(tool_prob_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(tool_prob_path) as f:
         for line in f:
             row = json.loads(line.strip())
             dq_id = row.get("decision_question_id")
@@ -439,15 +576,18 @@ def load_tool_prob_nested(tool_prob_path: Path) -> dict:
     return tool_prob_lookup
 
 
-def load_tool_prob_aggregated(tool_prob_path: Path) -> dict:
+def load_tool_prob_aggregated(tool_prob_path: str) -> dict:
     """
     Load tool prob data from aggregated format (flat columns with tool_call_rate).
+
+    Args:
+        tool_prob_path: Local path or URL to the file
 
     Returns: {(dq_id, race, gender, prompt_format): tool_prob}
     """
     tool_prob_lookup = {}
 
-    with open(tool_prob_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(tool_prob_path) as f:
         for line in f:
             row = json.loads(line.strip())
             dq_id = row.get("decision_question_id")
@@ -473,15 +613,18 @@ def load_tool_prob_aggregated(tool_prob_path: Path) -> dict:
     return tool_prob_lookup
 
 
-def load_tool_result_nested(tool_result_path: Path) -> dict:
+def load_tool_result_nested(tool_result_path: str) -> dict:
     """
     Load tool result data from raw format (nested dicts).
+
+    Args:
+        tool_result_path: Local path or URL to the file
 
     Returns: {(dq_id, race, gender, prompt_format): {tool_response: {yes_logit, no_logit}}}
     """
     tool_result_lookup = {}
 
-    with open(tool_result_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(tool_result_path) as f:
         for line in f:
             row = json.loads(line.strip())
             dq_id = row.get("decision_question_id")
@@ -519,17 +662,20 @@ def load_tool_result_nested(tool_result_path: Path) -> dict:
     return tool_result_lookup
 
 
-def load_tool_result_aggregated(tool_result_path: Path) -> dict:
+def load_tool_result_aggregated(tool_result_path: str) -> dict:
     """
     Load tool result data from aggregated format (flat columns).
 
     Columns like: default__run_counterfactual_simulation__Yes__yes_logit
 
+    Args:
+        tool_result_path: Local path or URL to the file
+
     Returns: {(dq_id, race, gender, prompt_format): {tool_response: {yes_logit, no_logit}}}
     """
     tool_result_lookup = {}
 
-    with open(tool_result_path, "r", encoding="utf-8") as f:
+    with open_file_or_url(tool_result_path) as f:
         for line in f:
             row = json.loads(line.strip())
             dq_id = row.get("decision_question_id")
@@ -567,9 +713,9 @@ def load_tool_result_aggregated(tool_result_path: Path) -> dict:
 
 
 def process_merged_data(
-    yn_logits_path: Path,
-    tool_prob_path: Path,
-    tool_result_path: Path,
+    yn_logits_path: str,
+    tool_prob_path: str,
+    tool_result_path: str,
     output_csv: Path,
 ):
     """
@@ -752,38 +898,81 @@ def process_file(input_path: Path, output_jsonl: Path, output_csv: Optional[Path
 # =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert wide JSONL to long format")
+    parser = argparse.ArgumentParser(
+        description="Convert wide JSONL to long format. "
+        "By default, loads data from OSF for reproducibility."
+    )
     parser.add_argument("--in", dest="inp", help="Input wide JSONL file")
     parser.add_argument("--out", dest="out_jsonl", help="Output long JSONL file")
     parser.add_argument("--out-csv", dest="out_csv", default=None, help="Output CSV file")
     parser.add_argument("--mode", choices=["yn_logprobs", "tool_use", "tool_prob", "tool_result_yn", "merged"],
                         default="merged",
                         help="Processing mode (default: merged)")
-    # For merged mode
-    parser.add_argument("--yn-in", dest="yn_in", help="YN logits JSONL (for merged mode)")
-    parser.add_argument("--tool-prob-in", dest="tool_prob_in", help="Tool prob JSONL (for merged mode)")
-    parser.add_argument("--tool-result-in", dest="tool_result_in", help="Tool result JSONL (for merged mode)")
+    # For merged mode - new OSF-based arguments
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["gpt-4.1", "qwen2.5-7b-instruct"],
+        help="Model to process (for merged mode with OSF or local folder)",
+    )
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default=None,
+        help="Local folder containing input JSONL files. If not specified, loads from OSF.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default=None,
+        help="Output folder for processed CSV. Default: ./results/",
+    )
+    # Legacy arguments for backward compatibility
+    parser.add_argument("--yn-in", dest="yn_in", help="YN logits JSONL (legacy, for merged mode)")
+    parser.add_argument("--tool-prob-in", dest="tool_prob_in", help="Tool prob JSONL (legacy, for merged mode)")
+    parser.add_argument("--tool-result-in", dest="tool_result_in", help="Tool result JSONL (legacy, for merged mode)")
     args = parser.parse_args()
 
     if args.mode == "merged":
-        if not args.yn_in or not args.tool_prob_in or not args.tool_result_in:
-            print("Error: merged mode requires --yn-in, --tool-prob-in, and --tool-result-in")
-            return
-        if not args.out_csv:
-            print("Error: merged mode requires --out-csv")
-            return
+        if args.model:
+            # New OSF-based loading (or local folder with --data-path)
+            source = "OSF" if args.data_path is None else args.data_path
+            print(f"Loading data for model: {args.model} (from {source})")
 
-        yn_path = Path(args.yn_in)
-        tool_prob_path = Path(args.tool_prob_in)
-        tool_result_path = Path(args.tool_result_in)
-        output_csv = Path(args.out_csv)
+            paths = resolve_file_paths(args.model, args.data_path)
+            for file_type, path in paths.items():
+                print(f"  {file_type}: {path}")
 
-        for path, name in [(yn_path, "yn"), (tool_prob_path, "tool_prob"), (tool_result_path, "tool_result")]:
-            if not path.exists():
-                print(f"Error: {name} file not found: {path}")
+            output_folder = Path(args.output_path) if args.output_path else OUTPUT_FOLDER
+            output_folder.mkdir(parents=True, exist_ok=True)
+            output_csv = output_folder / f"demographic_bias_processed_{args.model}.csv"
+
+            process_merged_data(
+                paths["yn_logits"],
+                paths["tool_prob"],
+                paths["tool_result"],
+                output_csv,
+            )
+        elif args.yn_in and args.tool_prob_in and args.tool_result_in:
+            # Legacy: explicit file paths
+            if not args.out_csv:
+                print("Error: legacy merged mode requires --out-csv")
                 return
 
-        process_merged_data(yn_path, tool_prob_path, tool_result_path, output_csv)
+            yn_path = Path(args.yn_in)
+            tool_prob_path = Path(args.tool_prob_in)
+            tool_result_path = Path(args.tool_result_in)
+            output_csv = Path(args.out_csv)
+
+            for path, name in [(yn_path, "yn"), (tool_prob_path, "tool_prob"), (tool_result_path, "tool_result")]:
+                if not path.exists():
+                    print(f"Error: {name} file not found: {path}")
+                    return
+
+            process_merged_data(str(yn_path), str(tool_prob_path), str(tool_result_path), output_csv)
+        else:
+            print("Error: merged mode requires --model OR (--yn-in, --tool-prob-in, --tool-result-in, --out-csv)")
+            return
     else:
         if not args.inp or not args.out_jsonl:
             print("Error: --in and --out are required for this mode")
