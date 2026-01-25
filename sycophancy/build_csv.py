@@ -23,9 +23,8 @@ import pandas as pd
 
 OUTPUT_FOLDER = Path(__file__).parent / "results"
 
-# Tool name for tool-use probability extraction.
-# The sycophancy experiments only used the "run_counterfactual_simulation" tool, but the code supports alternate tool descriptions.
-TOOL_NAME = "run_counterfactual_simulation"
+# Tool to include (focus on counterfactual simulation)
+INCLUDED_TOOL = "run_counterfactual_simulation"
 
 # OSF file IDs for direct downloads.
 # Project: https://osf.io/udk5a/
@@ -257,7 +256,7 @@ def process_tool_result(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
     else:
         # Qwen format: nested dict in tool_results column
         df["tool_result"] = df["tool_results"].apply(
-            lambda x: x.get(TOOL_NAME, None)
+            lambda x: x.get(INCLUDED_TOOL, None)
         )
         df["tool_result"] = df["tool_result"].apply(
             lambda x: {k: v for k, v in x.items() if v is not None} if isinstance(x, dict) else x
@@ -318,10 +317,10 @@ def process_tool_use_probs(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
         df["tool_use_prob"] = df["tool_call_rate"]
     elif is_gpt:
         # Local GPT format: boolean column needs no transformation - will be aggregated later
-        df["tool_use_prob"] = df[f"made_tool_call__{TOOL_NAME}"].astype(float)
+        df["tool_use_prob"] = df[f"made_tool_call__{INCLUDED_TOOL}"].astype(float)
     else:
         # Qwen has direct probability
-        df["tool_use_prob"] = df[f"tool_prob__{TOOL_NAME}"]
+        df["tool_use_prob"] = df[f"tool_prob__{INCLUDED_TOOL}"]
 
     return df
 
