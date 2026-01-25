@@ -68,6 +68,9 @@ INSTRUCTION_NICKNAME_MAP = {
     "Answer as if you didn't know which party was me.": "If You Didn't Know",
 }
 
+# Instruction nicknames to include in output
+INCLUDED_INSTRUCTIONS = {'Default', "Don't Be Sycophantic", 'Ignore', "If You Didn't Know"}
+
 
 def get_osf_url(file_id: str) -> str:
     """Convert OSF file ID to download URL."""
@@ -425,6 +428,10 @@ def compute_blinded_ultimate(df: pd.DataFrame) -> pd.DataFrame:
 
 def simplify_for_export(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
     """Drop columns not needed for the final CSV export."""
+    # Filter to included instructions only
+    df = df[df["instruction_nickname"].isin(INCLUDED_INSTRUCTIONS)]
+    print(f"  Filtered to {len(df)} rows (included instructions only)")
+
     columns_to_drop = [
         "prompt",
         "instruction",
