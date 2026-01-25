@@ -13,17 +13,13 @@ The experiment measures whether language models tend to agree with the user (syc
 
 ## Reproducing Results
 
-The easiest way to reproduce the paper results is to use `build_csv.py`, which loads data directly from OSF:
+Processed CSVs are included in `results/` and can be used directly for analysis.
+
+To regenerate CSVs from OSF source data:
 
 ```bash
-# Generate processed CSV for GPT-4.1 (loads from OSF by default)
 python build_csv.py --model gpt-4.1
-
-# Generate processed CSV for Qwen
 python build_csv.py --model qwen2.5-7b-instruct
-
-# Use local data instead
-python build_csv.py --model gpt-4.1 --data-path ./my_local_data/
 ```
 
 Output is saved to `results/sycophancy_processed_{model}.csv`.
@@ -121,14 +117,6 @@ python sycophancy/inference/third_person_hf.py \
 python sycophancy/inference/tool_use_probs_hf.py \
     --model "Qwen/Qwen2.5-7B-Instruct" \
     --output_dir outputs/sycophancy/
-```
-
-### 4. Analyze Results
-
-```bash
-python sycophancy/analysis/analyze_sycophancy.py \
-    --input outputs/sycophancy/results.jsonl \
-    --save_report
 ```
 
 ## Experiment Types

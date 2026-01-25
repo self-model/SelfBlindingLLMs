@@ -4,17 +4,13 @@ This module measures demographic bias in language models and evaluates strategie
 
 ## Reproducing Results
 
-The easiest way to reproduce the paper results is to use `build_csv.py`, which loads data directly from OSF:
+Processed CSVs are included in `results/` and can be used directly for analysis.
+
+To regenerate CSVs from OSF source data:
 
 ```bash
-# Generate processed CSV for GPT-4.1 (loads from OSF by default)
 python build_csv.py --model gpt-4.1
-
-# Generate processed CSV for Qwen
 python build_csv.py --model qwen2.5-7b-instruct
-
-# Use local data instead
-python build_csv.py --model gpt-4.1 --data-path ./my_local_data/
 ```
 
 Output is saved to `results/demographic_bias_processed_{model}.csv`.
