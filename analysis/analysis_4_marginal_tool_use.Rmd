@@ -29,9 +29,29 @@ library(matrixStats)
 
 
 ```{r load data}
-source('loadAndFormatTamkinData.R')
-source('loadAndFormatTamkinToolData.R')
-source('loadAndFormatTamkinToolRespData.R')
+source('helpers.R')
+source('parse_tool_generations.R')
+
+# Load bias data for both models
+Qwen.Tamkin.YN.df <- load_bias_data("qwen")
+GPT.Tamkin.YN.df <- load_bias_data("gpt")
+
+# Create response_by_prompt with baseline comparison
+Qwen.Tamkin.response_by_prompt <- Qwen.Tamkin.YN.df %>% with_baseline()
+GPT.Tamkin.response_by_prompt <- GPT.Tamkin.YN.df %>% with_baseline()
+
+# Calculate mean absolute difference stats
+Qwen.Tamkin.mean_abs_diff <- Qwen.Tamkin.response_by_prompt %>% summarize_bias()
+GPT.Tamkin.mean_abs_diff <- GPT.Tamkin.response_by_prompt %>% summarize_bias()
+
+# Load tool use data (for parse_tool_generations compatibility)
+tool_data <- load_tool_use_data("both")
+Qwen.Tamkin.tool_use_combined <- tool_data$qwen
+GPT.Tamkin.tool_use_combined <- tool_data$gpt
+
+# Load conditional logit response data (wide format) and pivot to long format
+combined_resp_df <- load_tool_response_data("both") %>%
+  pivot_conditional_logits()
 ```
 
 

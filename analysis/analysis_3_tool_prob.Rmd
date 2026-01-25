@@ -29,16 +29,26 @@ library(matrixStats)
 
 
 ```{r load data}
-source('loadAndFormatTamkinData.R')
-source('loadAndFormatTamkinToolData.R')
+source('helpers.R')
+source('parse_tool_generations.R')
+
+# Load bias data
+Qwen.Tamkin.YN.df <- load_bias_data("qwen")
+GPT.Tamkin.YN.df <- load_bias_data("gpt")
+
+# Load tool use data (CSV + generation parsing for Qwen)
+tool_data <- load_tool_use_data("both")
+Qwen.Tamkin.tool_use_combined <- tool_data$qwen
+GPT.Tamkin.tool_use_combined <- tool_data$gpt
 ```
 
 
 ```{r plot}
 # Combine the two dataframes
+# Note: vignette column already exists from helpers (renamed from vignette)
 all_tool_calls <- bind_rows(
-  GPT.Tamkin.tool_use_combined %>% mutate(model = "GPT", vignette = decision_question_id),
-  Qwen.Tamkin.tool_use_combined %>% mutate(model = "Qwen")
+  GPT.Tamkin.tool_use_combined,
+  Qwen.Tamkin.tool_use_combined
 )
 
 # Define labels and colors

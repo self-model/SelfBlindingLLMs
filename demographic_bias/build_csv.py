@@ -39,6 +39,15 @@ TOOL_USE_RE = re.compile(r"^(?P<prompt_format>.+)__(?P<tool_name>.+)__completion
 # Matches: {prompt_format}__{tool_name}__tool_prob
 TOOL_PROB_RE = re.compile(r"^(?P<prompt_format>.+)__(?P<tool_name>.+)__tool_prob$")
 
+# Matches aggregated tool call rate: {prompt_format}__{tool_name}__tool_call_rate
+TOOL_CALL_RATE_RE = re.compile(r"^(?P<prompt_format>.+)__(?P<tool_name>.+)__tool_call_rate$")
+
+# Matches aggregated tool result: {prompt_format}__{tool_name}__{response}__{metric}
+# e.g., default__run_counterfactual_simulation__Yes__yes_logit
+TOOL_RESULT_FLAT_RE = re.compile(
+    r"^(?P<prompt_format>.+)__(?P<tool_name>.+)__(?P<response>Yes|No)__(?P<metric>yes_logit|no_logit|yes_relative_prob|no_relative_prob)$"
+)
+
 # Decision question IDs to exclude (inverted or problematic questions)
 EXCLUDED_DECISION_QUESTION_IDS = {23, 54, 65, 67, 77}
 
@@ -332,26 +341,37 @@ def iter_tool_result_yn_rows(wide_row: Dict[str, Any], row_index: int) -> Iterat
 # Merged Tool Data Processing
 # =============================================================================
 
-def process_merged_data(
-    yn_logits_path: Path,
-    tool_prob_path: Path,
-    tool_result_path: Path,
-    output_csv: Path,
-):
+def detect_aggregated_format(file_path: Path) -> bool:
     """
-    Merge yn_logits, tool_prob, and tool_result data into a single CSV.
+    Detect if the file uses aggregated format (flat columns with tool_call_rate or flattened tool result).
 
-    Output columns:
-    - decision_question_id, race, gender, prompt_format
-    - yes_logit, no_logit (direct response without tool)
-    - tool_prob
-    - yes_logit_when_tool_says_yes, no_logit_when_tool_says_yes
-    - yes_logit_when_tool_says_no, no_logit_when_tool_says_no
+    Returns True if aggregated format, False if raw format.
     """
-    import csv
+    with open(file_path, "r", encoding="utf-8") as f:
+        first_line = f.readline().strip()
+        if not first_line:
+            return False
+        row = json.loads(first_line)
 
-    # Build lookup from yn_logits data
-    yn_lookup = {}  # (dq_id, race, gender, prompt_format) -> {yes_logit, no_logit}
+    # Check for aggregated tool prob format
+    if any(TOOL_CALL_RATE_RE.match(k) for k in row.keys()):
+        return True
+
+    # Check for aggregated tool result format
+    if any(TOOL_RESULT_FLAT_RE.match(k) for k in row.keys()):
+        return True
+
+    return False
+
+
+def load_yn_logits(yn_logits_path: Path) -> dict:
+    """
+    Load YN logits data into lookup dict.
+
+    Works with both raw and aggregated formats (same column pattern).
+    Returns: {(dq_id, race, gender, prompt_format): {metric: value}}
+    """
+    yn_lookup = {}
 
     with open(yn_logits_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -376,10 +396,16 @@ def process_merged_data(
                     yn_lookup[lookup_key] = {}
                 yn_lookup[lookup_key][metric] = v
 
-    print(f"Loaded {len(yn_lookup)} yn_logits entries")
+    return yn_lookup
 
-    # Build lookup from tool_prob data
-    tool_prob_lookup = {}  # (dq_id, race, gender, prompt_format) -> tool_prob
+
+def load_tool_prob_nested(tool_prob_path: Path) -> dict:
+    """
+    Load tool prob data from raw format (nested dicts).
+
+    Returns: {(dq_id, race, gender, prompt_format): tool_prob}
+    """
+    tool_prob_lookup = {}
 
     with open(tool_prob_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -410,10 +436,50 @@ def process_merged_data(
                     lookup_key = (dq_id, row.get("race"), row.get("gender"), prompt_format)
                     tool_prob_lookup[lookup_key] = prob
 
-    print(f"Loaded {len(tool_prob_lookup)} tool_prob entries")
+    return tool_prob_lookup
 
-    # Build lookup from tool_result data
-    tool_result_lookup = {}  # (dq_id, race, gender, prompt_format) -> {tool_response: {yes_logit, no_logit}}
+
+def load_tool_prob_aggregated(tool_prob_path: Path) -> dict:
+    """
+    Load tool prob data from aggregated format (flat columns with tool_call_rate).
+
+    Returns: {(dq_id, race, gender, prompt_format): tool_prob}
+    """
+    tool_prob_lookup = {}
+
+    with open(tool_prob_path, "r", encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line.strip())
+            dq_id = row.get("decision_question_id")
+            if dq_id in EXCLUDED_DECISION_QUESTION_IDS:
+                continue
+
+            for k, v in row.items():
+                m = TOOL_CALL_RATE_RE.match(k)
+                if not m:
+                    continue
+
+                prompt_format = m.group("prompt_format")
+                tool_name = m.group("tool_name")
+
+                if prompt_format not in INCLUDED_PROMPT_FORMATS:
+                    continue
+                if tool_name != INCLUDED_TOOL:
+                    continue
+
+                lookup_key = (dq_id, row.get("race"), row.get("gender"), prompt_format)
+                tool_prob_lookup[lookup_key] = v
+
+    return tool_prob_lookup
+
+
+def load_tool_result_nested(tool_result_path: Path) -> dict:
+    """
+    Load tool result data from raw format (nested dicts).
+
+    Returns: {(dq_id, race, gender, prompt_format): {tool_response: {yes_logit, no_logit}}}
+    """
+    tool_result_lookup = {}
 
     with open(tool_result_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -450,6 +516,98 @@ def process_merged_data(
                             "no_logit": metrics.get("no_logit"),
                         }
 
+    return tool_result_lookup
+
+
+def load_tool_result_aggregated(tool_result_path: Path) -> dict:
+    """
+    Load tool result data from aggregated format (flat columns).
+
+    Columns like: default__run_counterfactual_simulation__Yes__yes_logit
+
+    Returns: {(dq_id, race, gender, prompt_format): {tool_response: {yes_logit, no_logit}}}
+    """
+    tool_result_lookup = {}
+
+    with open(tool_result_path, "r", encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line.strip())
+            dq_id = row.get("decision_question_id")
+            if dq_id in EXCLUDED_DECISION_QUESTION_IDS:
+                continue
+
+            for k, v in row.items():
+                m = TOOL_RESULT_FLAT_RE.match(k)
+                if not m:
+                    continue
+
+                prompt_format = m.group("prompt_format")
+                tool_name = m.group("tool_name")
+                response = m.group("response")  # "Yes" or "No"
+                metric = m.group("metric")  # "yes_logit", "no_logit", etc.
+
+                if prompt_format not in INCLUDED_PROMPT_FORMATS:
+                    continue
+                if tool_name != INCLUDED_TOOL:
+                    continue
+
+                # Normalize response to match expected format (e.g., "Yes." or "No.")
+                tool_response = response + "."
+
+                lookup_key = (dq_id, row.get("race"), row.get("gender"), prompt_format)
+                if lookup_key not in tool_result_lookup:
+                    tool_result_lookup[lookup_key] = {}
+                if tool_response not in tool_result_lookup[lookup_key]:
+                    tool_result_lookup[lookup_key][tool_response] = {}
+
+                # Map metric name (e.g., "yes_logit" -> "yes_logit")
+                tool_result_lookup[lookup_key][tool_response][metric] = v
+
+    return tool_result_lookup
+
+
+def process_merged_data(
+    yn_logits_path: Path,
+    tool_prob_path: Path,
+    tool_result_path: Path,
+    output_csv: Path,
+):
+    """
+    Merge yn_logits, tool_prob, and tool_result data into a single CSV.
+
+    Handles both raw and aggregated formats by auto-detecting the format.
+
+    Output columns:
+    - decision_question_id, race, gender, prompt_format
+    - yes_logit, no_logit (direct response without tool)
+    - tool_prob
+    - yes_logit_when_tool_says_yes, no_logit_when_tool_says_yes
+    - yes_logit_when_tool_says_no, no_logit_when_tool_says_no
+    """
+    import csv
+
+    # Load YN logits (same format for raw and aggregated)
+    yn_lookup = load_yn_logits(yn_logits_path)
+    print(f"Loaded {len(yn_lookup)} yn_logits entries")
+
+    # Detect and load tool_prob data
+    tool_prob_aggregated = detect_aggregated_format(tool_prob_path)
+    if tool_prob_aggregated:
+        print("Detected aggregated tool_prob format")
+        tool_prob_lookup = load_tool_prob_aggregated(tool_prob_path)
+    else:
+        print("Detected raw tool_prob format")
+        tool_prob_lookup = load_tool_prob_nested(tool_prob_path)
+    print(f"Loaded {len(tool_prob_lookup)} tool_prob entries")
+
+    # Detect and load tool_result data
+    tool_result_aggregated = detect_aggregated_format(tool_result_path)
+    if tool_result_aggregated:
+        print("Detected aggregated tool_result format")
+        tool_result_lookup = load_tool_result_aggregated(tool_result_path)
+    else:
+        print("Detected raw tool_result format")
+        tool_result_lookup = load_tool_result_nested(tool_result_path)
     print(f"Loaded {len(tool_result_lookup)} tool_result entries")
 
     # Merge and write output
@@ -461,8 +619,11 @@ def process_merged_data(
         "yes_logit_when_tool_says_no", "no_logit_when_tool_says_no",
     ]
 
-    # Get all keys (union of all lookups)
-    all_keys = set(yn_lookup.keys()) | set(tool_prob_lookup.keys()) | set(tool_result_lookup.keys())
+    # Use yn_logits as the primary source (left join)
+    # This ensures we keep all (dq_id, race, gender, prompt_format) combinations from yn_logits
+    # even if tool_prob or tool_result data is missing (will be NaN)
+    all_keys = set(yn_lookup.keys())
+    print(f"Keys from yn_logits: {len(all_keys)} (prob: {len(tool_prob_lookup)}, result: {len(tool_result_lookup)})")
 
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

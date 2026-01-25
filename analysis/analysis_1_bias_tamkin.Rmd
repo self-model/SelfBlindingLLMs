@@ -29,7 +29,19 @@ library(matrixStats)
 
 
 ```{r load and format Tamkin data}
-source('loadAndFormatTamkinData.R')
+source('helpers.R')
+
+# Load data for both models
+Qwen.Tamkin.YN.df <- load_bias_data("qwen")
+GPT.Tamkin.YN.df <- load_bias_data("gpt")
+
+# Create response_by_prompt with baseline comparison
+Qwen.Tamkin.response_by_prompt <- Qwen.Tamkin.YN.df %>% with_baseline()
+GPT.Tamkin.response_by_prompt <- GPT.Tamkin.YN.df %>% with_baseline()
+
+# Calculate mean absolute difference stats
+Qwen.Tamkin.mean_abs_diff <- Qwen.Tamkin.response_by_prompt %>% summarize_bias()
+GPT.Tamkin.mean_abs_diff <- GPT.Tamkin.response_by_prompt %>% summarize_bias()
 ```
 
 ```{r Tamkin scatterplots}
