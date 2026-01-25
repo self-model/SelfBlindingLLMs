@@ -61,9 +61,37 @@ scenario = dataset.filter(lambda x: x["nickname"] == "dog_poop_frequency")[0]
 demographic-bias/
   data/
     discrim-eval-templated.jsonl    # Input scenarios
-  inference/                        # (coming soon)
-  results/                          # (coming soon)
+  inference/                        # HuggingFace and OpenAI inference scripts
+  build_csv.py                      # Generate analysis-ready CSV from OSF data
+  aggregate_batch_runs.py           # Aggregation script for batch runs
 ```
+
+### Reproducing Results
+
+Generate the processed CSV directly from OSF (no local data needed):
+
+```bash
+python demographic_bias/build_csv.py --model gpt-4.1
+python demographic_bias/build_csv.py --model qwen2.5-7b-instruct
+```
+
+Output: `demographic_bias/results/demographic_bias_processed_{model}.csv`
+
+### Experiment Data (OSF)
+
+All experiment data is hosted on OSF: **https://osf.io/udk5a/**
+
+```
+osf.io/udk5a/files/osfstorage/demographic-bias/
+├── gpt-4.1/
+│   ├── *_aggregated.jsonl          # Aggregated across 50 runs (mean/std/se)
+│   ├── *_all_runs.jsonl            # Individual runs with run_idx
+│   └── raw/                        # Batch run folders
+└── Qwen2.5-7B-Instruct/
+    └── *.jsonl                     # Single-run results
+```
+
+See [`demographic_bias/README.md`](demographic_bias/README.md) for detailed documentation.
 
 ---
 

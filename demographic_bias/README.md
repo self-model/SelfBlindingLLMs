@@ -2,6 +2,58 @@
 
 This module measures demographic bias in language models and evaluates strategies for reducing it, including self-blinding and counterfactual simulation.
 
+## Reproducing Results
+
+The easiest way to reproduce the paper results is to use `build_csv.py`, which loads data directly from OSF:
+
+```bash
+# Generate processed CSV for GPT-4.1 (loads from OSF by default)
+python build_csv.py --model gpt-4.1
+
+# Generate processed CSV for Qwen
+python build_csv.py --model qwen2.5-7b-instruct
+
+# Use local data instead
+python build_csv.py --model gpt-4.1 --data-path ./my_local_data/
+```
+
+Output is saved to `results/demographic_bias_processed_{model}.csv`.
+
+## OSF Data
+
+Raw and processed experiment data is available on OSF: **https://osf.io/udk5a/**
+
+### Data Structure
+
+```
+osf.io/udk5a/files/osfstorage/
+└── demographic-bias/
+    ├── gpt-4.1/
+    │   ├── *_yn_logits_*_aggregated.jsonl      # Yes/No logprobs (aggregated across 50 runs)
+    │   ├── *_tool_probs_*_aggregated.jsonl     # Tool use probability
+    │   ├── *_tool_result_*_aggregated.jsonl    # Post-tool logprobs
+    │   ├── *_all_runs.jsonl                    # Individual run data (for variance analysis)
+    │   └── raw/                                # Individual batch run files
+    │
+    └── Qwen2.5-7B-Instruct/
+        ├── *_yn_logits_*.jsonl                 # Yes/No logprobs
+        ├── *_tool_use_probs_*.jsonl            # Tool use probability
+        └── *_tool_result_*.jsonl               # Post-tool logprobs
+```
+
+### File Types
+
+| File Type | Description | Rows per Model |
+|-----------|-------------|----------------|
+| `yn_logits` | Main bias measurement: P(Yes) across demographics | 520 per prompt format |
+| `tool_prob` | Probability of using the counterfactual simulation tool | 520 per prompt format |
+| `tool_result` | Logprobs after seeing counterfactual simulation results | 520 per prompt format |
+
+### GPT vs Qwen Format
+
+- **GPT-4.1**: Multiple runs (n=50) aggregated. Files have `_aggregated` suffix with mean/std/se columns.
+- **Qwen**: Single run. Direct logprob values without aggregation.
+
 ## Overview
 
 Language models may exhibit demographic bias when making yes/no decisions about scenarios involving people. This experiment measures:
@@ -64,8 +116,10 @@ demographic-bias/
 │   ├── tool_use_probs_hf.py               # HuggingFace tool-use probability
 │   ├── tool_result_yn_logprobs_openai.py  # OpenAI tool result scoring
 │   └── tool_result_yn_logprobs_hf.py      # HuggingFace tool result scoring
-├── results/                               # Output files
-├── build_csv.py                           # Convert JSONL to long format/CSV
+├── results/
+│   └── demographic_bias_processed_{model}.csv  # Output from build_csv.py
+├── build_csv.py                           # Process raw data → analysis-ready CSV
+├── aggregate_batch_runs.py                # Aggregate multiple runs (for GPT batch experiments)
 └── README.md
 ```
 
