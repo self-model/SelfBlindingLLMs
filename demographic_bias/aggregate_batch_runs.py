@@ -289,6 +289,8 @@ def flatten_gpt_tool_probs(df: pd.DataFrame) -> pd.DataFrame:
     Creates columns:
     - {prompt}__{tool}__made_tool_call: bool
     - {prompt}__{tool}__response_content: str (when no tool call)
+
+    Drops the original completion_json columns to reduce memory/file size.
     """
     df = df.copy()
 
@@ -308,6 +310,10 @@ def flatten_gpt_tool_probs(df: pd.DataFrame) -> pd.DataFrame:
         # Create new columns
         df[f'{prompt_format}__{tool_name}__made_tool_call'] = parsed.apply(lambda x: x['made_tool_call'])
         df[f'{prompt_format}__{tool_name}__response_content'] = parsed.apply(lambda x: x['response_content'])
+
+    # Drop original completion_json columns to reduce file size
+    # (they can be very large and the useful info has been extracted)
+    df = df.drop(columns=completion_cols)
 
     return df
 
