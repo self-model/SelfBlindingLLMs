@@ -34,20 +34,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sycophancy.config import DEFAULT_SYCOPHANCY_DATA, DEFAULT_TOOL_PROMPTS_PATH
-from src.inference import load_model_and_tokenizer
+from src.inference import load_model_and_tokenizer, get_tool_use_start_token_id
 from sycophancy.prompts.first_person import (
     load_scenarios,
     generate_full_experiment,
     ForcedChoiceCondition,
 )
-
-# Known tool use start tokens by model family
-TOOL_USE_START_TOKENS = {
-    "qwen": "<tool_call>",
-    "llama": "<|python_tag|>",
-    "mistral": "[TOOL_CALLS]",
-}
-
 
 # =============================================================================
 # Tool Definition
@@ -79,42 +71,6 @@ def create_tool_definition(tool_prompt: dict) -> list:
             }
         }
     }]
-
-
-def get_tool_use_start_token_id(tokenizer, model_name: str) -> int | None:
-    """
-    Get the tool use start token ID for a given model.
-
-    Different model families use different tokens to indicate tool calls.
-    Returns None if the token can't be found.
-    """
-    model_name_lower = model_name.lower()
-
-    # Determine model family
-    if "qwen" in model_name_lower:
-        token_str = TOOL_USE_START_TOKENS["qwen"]
-    elif "llama" in model_name_lower:
-        token_str = TOOL_USE_START_TOKENS["llama"]
-    elif "mistral" in model_name_lower:
-        token_str = TOOL_USE_START_TOKENS["mistral"]
-    else:
-        # Try common tokens
-        for token_str in TOOL_USE_START_TOKENS.values():
-            token_ids = tokenizer.encode(token_str, add_special_tokens=False)
-            if len(token_ids) == 1:
-                return token_ids[0]
-        return None
-
-    # Encode the token
-    token_ids = tokenizer.encode(token_str, add_special_tokens=False)
-    if len(token_ids) == 1:
-        return token_ids[0]
-
-    # Try without special tokens handling
-    if token_str in tokenizer.get_vocab():
-        return tokenizer.get_vocab()[token_str]
-
-    return None
 
 
 # =============================================================================
@@ -418,12 +374,7 @@ def main():
     model, tokenizer = load_model_and_tokenizer(args.model)
 
     # Get tool use start token ID
-    tool_use_start_token_id = get_tool_use_start_token_id(tokenizer, args.model)
-    if tool_use_start_token_id is None:
-        print("Error: Could not find tool use start token for this model")
-        print("This model may not support tool use or uses an unknown token format")
-        sys.exit(1)
-
+    tool_use_start_token_id = get_tool_use_start_token_id(args.model)
     print(f"Tool use start token ID: {tool_use_start_token_id}")
     print(f"Tool use start token: {repr(tokenizer.decode([tool_use_start_token_id]))}")
 

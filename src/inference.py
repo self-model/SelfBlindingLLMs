@@ -99,7 +99,7 @@ def load_model_and_tokenizer(model_name: str, use_cache: bool = False, max_lengt
 # Token Utilities
 # =============================================================================
 
-def tool_use_start_token_id(model_name: str):
+def get_tool_use_start_token_id(model_name: str):
     return MODEL_CONFIGS[model_name]['tool_use_start_token_id']
 
 def get_token(tokenizer, token_str: str):

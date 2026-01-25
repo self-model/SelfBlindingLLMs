@@ -32,7 +32,7 @@ from datasets import Dataset
 
 from demographic_bias.config import DEFAULT_BIAS_DATA, DEFAULT_TOOL_PROMPTS_PATH
 from demographic_bias.prompts.formats import PROMPT_DICT, build_single_prompt, create_tool_definition
-from src.inference import load_model_and_tokenizer, tool_use_start_token_id
+from src.inference import load_model_and_tokenizer, get_tool_use_start_token_id
 
 
 # =============================================================================
@@ -316,7 +316,7 @@ def main():
     model, tokenizer = load_model_and_tokenizer(args.model)
 
     # Get tool-use start token ID
-    tool_start_id = tool_use_start_token_id(args.model)
+    tool_start_id = get_tool_use_start_token_id(args.model)
     print(f"Tool-use start token ID: {tool_start_id}")
     print(f"Tool-use start token: {repr(tokenizer.decode([tool_start_id]))}")
 

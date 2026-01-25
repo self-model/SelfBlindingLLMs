@@ -1,0 +1,40 @@
+################
+# QWEN FAMILY
+################
+
+# Qwen 2.5
+Qwen/Qwen2.5-0.5B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-1.5B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-3B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-7B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-14B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-32B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen2.5-72B-Instruct:
+  dtype: bfloat16
+  load_in_8bit: True
+  num_gpus: 1
+  tool_use_start_token_id: 151657

@@ -3,42 +3,6 @@ from pathlib import Path
 import yaml
 import torch
 
-# Default model configurations (used when model_config.yaml not found)
-DEFAULT_MODEL_CONFIGS = {
-    # Qwen models
-    "Qwen/Qwen2.5-0.5B-Instruct": {"dtype": torch.bfloat16},
-    "Qwen/Qwen2.5-1.5B-Instruct": {"dtype": torch.bfloat16},
-    "Qwen/Qwen2.5-3B-Instruct": {"dtype": torch.bfloat16},
-    "Qwen/Qwen2.5-7B-Instruct": {"dtype": torch.bfloat16},
-    "Qwen/Qwen2.5-14B-Instruct": {"dtype": torch.bfloat16},
-    "Qwen/Qwen2.5-32B-Instruct": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    "Qwen/Qwen2.5-72B-Instruct": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    # Llama models
-    "meta-llama/Llama-3.1-8B-Instruct": {"dtype": torch.bfloat16},
-    "meta-llama/Llama-3.1-70B-Instruct": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    "meta-llama/Llama-3.2-1B-Instruct": {"dtype": torch.bfloat16},
-    "meta-llama/Llama-3.2-3B-Instruct": {"dtype": torch.bfloat16},
-    "meta-llama/Llama-3.3-70B-Instruct": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    # Gemma models
-    "google/gemma-2-2b-it": {"dtype": torch.bfloat16},
-    "google/gemma-2-9b-it": {"dtype": torch.bfloat16},
-    "google/gemma-2-27b-it": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    "google/gemma-3-4b-it": {"dtype": torch.bfloat16},
-    "google/gemma-3-12b-it": {"dtype": torch.bfloat16},
-    "google/gemma-3-27b-it": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    # Mistral models
-    "mistralai/Mistral-7B-Instruct-v0.3": {"dtype": torch.bfloat16},
-    "mistralai/Mistral-Small-24B-Instruct-2501": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    # DeepSeek models
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {"dtype": torch.bfloat16},
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {"dtype": torch.bfloat16},
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {"dtype": torch.bfloat16},
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {"dtype": torch.bfloat16, "load_in_8bit": True},
-    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": {"dtype": torch.bfloat16},
-    "deepseek-ai/DeepSeek-R1-Distill-Llama-70B": {"dtype": torch.bfloat16, "load_in_8bit": True},
-}
-
-
 def load_model_configs(config_path: str | Path | None = None) -> dict:
     """
     Load model configurations from YAML file or use built-in defaults.
@@ -62,9 +26,8 @@ def load_model_configs(config_path: str | Path | None = None) -> dict:
             if isinstance(settings.get('dtype'), str):
                 settings['dtype'] = getattr(torch, settings['dtype'])
         return MODEL_CONFIGS
-
-    # Use built-in defaults
-    return DEFAULT_MODEL_CONFIGS.copy()
+    else:
+        raise FileNotFoundError(f"Config file not found: {yaml_path}")
 
 def clear_gpu_memory(model=None, tokenizer=None):
     import gc
