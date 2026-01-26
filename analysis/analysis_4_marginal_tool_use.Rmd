@@ -33,21 +33,21 @@ source('helpers.R')
 source('parse_tool_generations.R')
 
 # Load bias data for both models
-Qwen.Tamkin.YN.df <- load_bias_data("qwen")
-GPT.Tamkin.YN.df <- load_bias_data("gpt")
+Qwen.Bias.YN.df <- load_bias_data("qwen")
+GPT.Bias.YN.df <- load_bias_data("gpt")
 
 # Create response_by_prompt with baseline comparison
-Qwen.Tamkin.response_by_prompt <- Qwen.Tamkin.YN.df %>% with_baseline()
-GPT.Tamkin.response_by_prompt <- GPT.Tamkin.YN.df %>% with_baseline()
+Qwen.Bias.response_by_prompt <- Qwen.Bias.YN.df %>% with_baseline()
+GPT.Bias.response_by_prompt <- GPT.Bias.YN.df %>% with_baseline()
 
 # Calculate mean absolute difference stats
-Qwen.Tamkin.mean_abs_diff <- Qwen.Tamkin.response_by_prompt %>% summarize_bias()
-GPT.Tamkin.mean_abs_diff <- GPT.Tamkin.response_by_prompt %>% summarize_bias()
+Qwen.Bias.mean_abs_diff <- Qwen.Bias.response_by_prompt %>% summarize_bias()
+GPT.Bias.mean_abs_diff <- GPT.Bias.response_by_prompt %>% summarize_bias()
 
 # Load tool use data (for parse_tool_generations compatibility)
 tool_data <- load_tool_use_data("both")
-Qwen.Tamkin.tool_use_combined <- tool_data$qwen
-GPT.Tamkin.tool_use_combined <- tool_data$gpt
+Qwen.Bias.tool_use_combined <- tool_data$qwen
+GPT.Bias.tool_use_combined <- tool_data$gpt
 
 # Load conditional logit response data (wide format) and pivot to long format
 combined_resp_df <- load_tool_response_data("both") %>%
@@ -57,9 +57,9 @@ combined_resp_df <- load_tool_response_data("both") %>%
 
 ```{r analyze and plot}
 
-combined_yn_df <- Qwen.Tamkin.YN.df %>%
+combined_yn_df <- Qwen.Bias.YN.df %>%
   dplyr::select(model, filled_template,vignette,race,gender,prompt, response)%>%
-  rbind(GPT.Tamkin.YN.df %>%
+  rbind(GPT.Bias.YN.df %>%
           ungroup()%>%
   dplyr::select(model, filled_template,vignette,race,gender,prompt, response))
 
@@ -135,7 +135,7 @@ combined_full_df %>%
   )
 
 ggsave(
-  'figures/self-calls/Qwen2.5-7B/responses_after_simulation_Tamkin.png', 
+  'figures/self-calls/Qwen2.5-7B/responses_after_simulation_demographic_bias.png',
   height = 4.5, width = 10, dpi = 300
 )
 
@@ -186,8 +186,8 @@ Assuming reliable and accurate self-calling, for decisions to be unbiased the mo
 
 ```{r fit regression model}
 
-regression_model_df <- Qwen.Tamkin.response_by_prompt %>%
-  rbind(GPT.Tamkin.response_by_prompt %>%
+regression_model_df <- Qwen.Bias.response_by_prompt %>%
+  rbind(GPT.Bias.response_by_prompt %>%
           dplyr::select(model, vignette,race,gender,prompt, response,removed_response)) %>%
   merge(combined_resp_df %>%
           mutate(after_self_call_response=yes_logit-no_logit) %>%
@@ -608,20 +608,20 @@ p_bar <- original_data_bar %>%
 
 # Apply to GPT
 gpt_results <- create_marginal_figure(
-  GPT.Tamkin.response_by_prompt,
+  GPT.Bias.response_by_prompt,
   marginal_response_data,
-  GPT.Tamkin.mean_abs_diff,
+  GPT.Bias.mean_abs_diff,
   "GPT",
-  'figures/tamkin/GPT4.1/marginal_complete_figure.png'
+  'figures/demographic_bias/GPT4.1/marginal_complete_figure.png'
 )
 
 # Apply to Qwen
 qwen_results <- create_marginal_figure(
-  Qwen.Tamkin.response_by_prompt,
+  Qwen.Bias.response_by_prompt,
   marginal_response_data,
-  Qwen.Tamkin.mean_abs_diff,
+  Qwen.Bias.mean_abs_diff,
   "Qwen",
-  'figures/tamkin/Qwen2.5-7B/marginal_complete_figure.png'
+  'figures/demographic_bias/Qwen2.5-7B/marginal_complete_figure.png'
 )
 
 ```
@@ -820,9 +820,9 @@ create_default_selfcall_comparison <- function(original_data, marginal_data, out
 
 # Create the comparison figure
 default_comparison_results <- create_default_selfcall_comparison(
-  bind_rows(GPT.Tamkin.response_by_prompt, Qwen.Tamkin.response_by_prompt),
+  bind_rows(GPT.Bias.response_by_prompt, Qwen.Bias.response_by_prompt),
   marginal_response_data,
-  'figures/tamkin/default_selfcall_comparison.png'
+  'figures/demographic_bias/default_selfcall_comparison.png'
 )
 
 ```

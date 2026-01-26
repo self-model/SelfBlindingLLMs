@@ -11,7 +11,7 @@ Usage:
     python aggregate_batch_runs.py <input_dir> [--output_dir <dir>] [--prefix <prefix>]
 
 Example:
-    python aggregate_batch_runs.py "results/2026-01-01 Gpt 4.1 YN logits Tamkin Revised"
+    python aggregate_batch_runs.py "results/2026-01-01 Gpt 4.1 YN logits demographic_bias"
 """
 
 import argparse

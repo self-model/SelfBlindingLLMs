@@ -1,5 +1,5 @@
 # Shared helper functions for demographic bias analysis
-# Replaces: loadAndFormatTamkinData.R, loadAndFormatTamkinToolRespData.R
+# Replaces: loadAndFormatBiasData.R, loadAndFormatBiasToolRespData.R
 
 # Load and prepare demographic bias data from merged CSVs
 load_bias_data <- function(model = c("qwen", "gpt", "both")) {

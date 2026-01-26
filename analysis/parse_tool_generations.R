@@ -1,6 +1,6 @@
 # Parse tool call generation data for demographic bias analysis
 # Extracts tool call text and checks for race/gender/pronoun inclusion
-# Replaces: loadAndFormatTamkinToolData.R
+# Replaces: loadAndFormatBiasToolData.R
 
 # Function to extract tool call text from generations (Qwen format)
 extract_tool_call <- function(generations) {

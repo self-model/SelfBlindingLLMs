@@ -102,7 +102,7 @@ def mount_gdrive():
 
 def normalize_dataset_columns(data):
     """
-    Normalize dataset column names for compatibility with Tamkin et al. (2023) dataset from HF hub.
+    Normalize dataset column names for compatibility with discrim-eval dataset from HF hub.
 
     Renames:
     - 'text' -> 'filled_template' (if filled_template doesn't exist)

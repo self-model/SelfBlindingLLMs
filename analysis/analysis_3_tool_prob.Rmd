@@ -33,13 +33,13 @@ source('helpers.R')
 source('parse_tool_generations.R')
 
 # Load bias data
-Qwen.Tamkin.YN.df <- load_bias_data("qwen")
-GPT.Tamkin.YN.df <- load_bias_data("gpt")
+Qwen.Bias.YN.df <- load_bias_data("qwen")
+GPT.Bias.YN.df <- load_bias_data("gpt")
 
 # Load tool use data (CSV + generation parsing for Qwen)
 tool_data <- load_tool_use_data("both")
-Qwen.Tamkin.tool_use_combined <- tool_data$qwen
-GPT.Tamkin.tool_use_combined <- tool_data$gpt
+Qwen.Bias.tool_use_combined <- tool_data$qwen
+GPT.Bias.tool_use_combined <- tool_data$gpt
 ```
 
 
@@ -47,8 +47,8 @@ GPT.Tamkin.tool_use_combined <- tool_data$gpt
 # Combine the two dataframes
 # Note: vignette column already exists from helpers (renamed from vignette)
 all_tool_calls <- bind_rows(
-  GPT.Tamkin.tool_use_combined,
-  Qwen.Tamkin.tool_use_combined
+  GPT.Bias.tool_use_combined,
+  Qwen.Bias.tool_use_combined
 )
 
 # Define labels and colors
@@ -96,7 +96,7 @@ ggplot(gpt_counts_df %>%
     legend.position = "none"
   )
 
-ggsave('figures/self-calls/GPT4.1/proportion_tool_use_Tamkin.png', height = 2.5, width = 4, dpi = 300)
+ggsave('figures/self-calls/GPT4.1/proportion_tool_use_demographic_bias.png', height = 2.5, width = 4, dpi = 300)
 
 # Create Qwen tool use plot
 ggplot(qwen_counts_df %>%
@@ -114,7 +114,7 @@ ggplot(qwen_counts_df %>%
     legend.position = "none"
   )
 
-ggsave('figures/self-calls/Qwen2.5-7B/proportion_tool_use_Tamkin.png', height = 2.5, width = 4, dpi = 300)
+ggsave('figures/self-calls/Qwen2.5-7B/proportion_tool_use_demographic_bias.png', height = 2.5, width = 4, dpi = 300)
 
 # Calculate proportions of demographic information inclusion
 inclusion_props <- all_tool_calls %>%
@@ -170,7 +170,7 @@ inclusion_df %>%
   ) +
   guides(color = "none")
 
-ggsave('figures/self-calls/GPT4.1/proportion_included_Tamkin.png', height = 3, width = 4, dpi = 300)
+ggsave('figures/self-calls/GPT4.1/proportion_included_demographic_bias.png', height = 3, width = 4, dpi = 300)
 
 # Qwen inclusion plot
 inclusion_df %>%
@@ -198,7 +198,7 @@ inclusion_df %>%
   ) +
   guides(color = "none")
 
-ggsave('figures/self-calls/Qwen2.5-7B/proportion_included_Tamkin.png', height = 3, width = 4, dpi = 300)
+ggsave('figures/self-calls/Qwen2.5-7B/proportion_included_demographic_bias.png', height = 3, width = 4, dpi = 300)
 ```
 
 Both models almost never self-called when gender and race information were not included in the scenario description (proportion of self-calls for Qwen: `r qwen_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`), and rarely when no debiasing instruction was given (Qwen: `r qwen_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`), but self-called reliably more when instructed to ignore race and gender information (Qwen: `r qwen_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`) or to estimate their decision had they not known the race and gender of the individual (Qwen: `r qwen_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`). Interestingly, figures for the "Don't discriminate" instruction were low (Qwen: `r qwen_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`).

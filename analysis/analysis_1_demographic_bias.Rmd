@@ -28,28 +28,28 @@ library(matrixStats)
 ```
 
 
-```{r load and format Tamkin data}
+```{r load and format bias data}
 source('helpers.R')
 
 # Load data for both models
-Qwen.Tamkin.YN.df <- load_bias_data("qwen")
-GPT.Tamkin.YN.df <- load_bias_data("gpt")
+Qwen.Bias.YN.df <- load_bias_data("qwen")
+GPT.Bias.YN.df <- load_bias_data("gpt")
 
 # Create response_by_prompt with baseline comparison
-Qwen.Tamkin.response_by_prompt <- Qwen.Tamkin.YN.df %>% with_baseline()
-GPT.Tamkin.response_by_prompt <- GPT.Tamkin.YN.df %>% with_baseline()
+Qwen.Bias.response_by_prompt <- Qwen.Bias.YN.df %>% with_baseline()
+GPT.Bias.response_by_prompt <- GPT.Bias.YN.df %>% with_baseline()
 
 # Calculate mean absolute difference stats
-Qwen.Tamkin.mean_abs_diff <- Qwen.Tamkin.response_by_prompt %>% summarize_bias()
-GPT.Tamkin.mean_abs_diff <- GPT.Tamkin.response_by_prompt %>% summarize_bias()
+Qwen.Bias.mean_abs_diff <- Qwen.Bias.response_by_prompt %>% summarize_bias()
+GPT.Bias.mean_abs_diff <- GPT.Bias.response_by_prompt %>% summarize_bias()
 ```
 
-```{r Tamkin scatterplots}
+```{r bias scatterplots}
 
 # Prepare combined data
-combined_data <- GPT.Tamkin.response_by_prompt %>%
+combined_data <- GPT.Bias.response_by_prompt %>%
   dplyr::select(model, vignette, prompt, gender, race, response, removed_response) %>%
-  rbind(Qwen.Tamkin.response_by_prompt %>%
+  rbind(Qwen.Bias.response_by_prompt %>%
     dplyr::select(model, vignette, prompt, gender, race, response, removed_response)) %>%
   filter(prompt == 'default') 
 
@@ -87,16 +87,16 @@ create_plot <- function(data, model_name) {
 
 # Create and save GPT plot
 p_gpt <- create_plot(combined_data, "GPT")
-ggsave("figures/tamkin/GPT4.1/default_plot.png", p_gpt, width = 3, height = 3, dpi = 300)
+ggsave("figures/demographic_bias/GPT4.1/default_plot.png", p_gpt, width = 3, height = 3, dpi = 300)
 
 # Create and save Qwen plot
 p_qwen <- create_plot(combined_data, "Qwen")
-ggsave("figures/tamkin/Qwen2.5-7B/default_plot.png", p_qwen, width = 3, height = 3, dpi = 300)
+ggsave("figures/demographic_bias/Qwen2.5-7B/default_plot.png", p_qwen, width = 3, height = 3, dpi = 300)
 
 
 ```
 
-```{r Tamkin prompts stats}
+```{r bias prompts stats}
 # ------------------------------------------------------------------------------
 # Fit models for each prompt
 # ------------------------------------------------------------------------------
@@ -288,8 +288,8 @@ p_qwen <- plot_data %>%
 
 
 # Or save them
-ggsave("figures/tamkin/GPT4.1/coefficients.png", p_gpt, width = 3, height = 2, dpi = 300)
-ggsave("figures/tamkin/Qwen2.5-7B/coefficients.png", p_qwen, width = 3, height = 2, dpi = 300)
+ggsave("figures/demographic_bias/GPT4.1/coefficients.png", p_gpt, width = 3, height = 2, dpi = 300)
+ggsave("figures/demographic_bias/Qwen2.5-7B/coefficients.png", p_qwen, width = 3, height = 2, dpi = 300)
 
 
 
@@ -297,5 +297,5 @@ ggsave("figures/tamkin/Qwen2.5-7B/coefficients.png", p_qwen, width = 3, height =
 
 ## Race and gender systematically bias models’ decisions
 
-Experimental trials were run in different context windows. The model was first presented with a vignette, and was then asked to make a decision (for example, ‘Should this patient be prioritized over other waiting patients to receive this kidney transplant? Please answer the above question with either “yes” or “no”.’). Following Tamkin et al. (2023), we then prefill the LLM response with ‘Based on the information provided, if I had to choose between “yes” and “no” my answer would be’, followed by an open quotation mark. Our dependent measure, hereafter “response”, was the difference in logit scores between “yes” and “no” as the next token, equivalent to the logarithm of the odds ratio between the probability of a “yes” versus a “no” response. The two models were substantially affected by the introduction of race and gender information. The mean absolute difference between the model's response  with and without gender and race information was `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for Qwen (SE = `r Qwen.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`) and `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for GPT (SE = `r GPT.Tamkin.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`). We next asked whether race and gender information had a systematic effect on the model's responses. To that end, we compared two linear regression models: the first predicted the model's response to scenarios with gender and race information revealed from its responses to the same scenarios with gender and race information removed, and the second was similar to the first but also included as predictors race and gender. The second model significantly improved the fit according to a likelihood ratio test for nested models, both for Qwen (`r Qwen_lrt`) and for GPT (`r GPT_lrt`), indicating that the model's responses were systematically more positive for some demographics. Specifically, relative to its responses when the person in question was a white male, Qwen2.5-7B-Instruct had a bias to produce more positive response when the person in question was a female (β=`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(p.value) %>% printp(add_equals=T)`) or Black (β=`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`). GPT-4.1 produced more positive responses when the person in question was Black (β=`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`), Hispanic (β=`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(p.value) %>% printp(add_equals=T)`), or Asian (β=`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(p.value) %>% printp(add_equals=T)`), compared to white.
+Experimental trials were run in different context windows. The model was first presented with a vignette, and was then asked to make a decision (for example, ‘Should this patient be prioritized over other waiting patients to receive this kidney transplant? Please answer the above question with either “yes” or “no”.’). Following the discrim-eval dataset methodology, we then prefill the LLM response with ‘Based on the information provided, if I had to choose between “yes” and “no” my answer would be’, followed by an open quotation mark. Our dependent measure, hereafter “response”, was the difference in logit scores between “yes” and “no” as the next token, equivalent to the logarithm of the odds ratio between the probability of a “yes” versus a “no” response. The two models were substantially affected by the introduction of race and gender information. The mean absolute difference between the model's response  with and without gender and race information was `r Qwen.Bias.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for Qwen (SE = `r Qwen.Bias.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`) and `r GPT.Bias.mean_abs_diff%>%filter(prompt=='default')%>%pull(mean_abs_diff)%>%printnum()` for GPT (SE = `r GPT.Bias.mean_abs_diff%>%filter(prompt=='default')%>%pull(se_abs_diff)%>%printnum()`). We next asked whether race and gender information had a systematic effect on the model's responses. To that end, we compared two linear regression models: the first predicted the model's response to scenarios with gender and race information revealed from its responses to the same scenarios with gender and race information removed, and the second was similar to the first but also included as predictors race and gender. The second model significantly improved the fit according to a likelihood ratio test for nested models, both for Qwen (`r Qwen_lrt`) and for GPT (`r GPT_lrt`), indicating that the model's responses were systematically more positive for some demographics. Specifically, relative to its responses when the person in question was a white male, Qwen2.5-7B-Instruct had a bias to produce more positive response when the person in question was a female (β=`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "genderfemale") %>% pull(p.value) %>% printp(add_equals=T)`) or Black (β=`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "Qwen", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`). GPT-4.1 produced more positive responses when the person in question was Black (β=`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceBlack") %>% pull(p.value) %>% printp(add_equals=T)`), Hispanic (β=`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceHispanic") %>% pull(p.value) %>% printp(add_equals=T)`), or Asian (β=`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(estimate) %>% round(2)`, p`r model_coefficients %>% filter(model == "GPT", term == "raceAsian") %>% pull(p.value) %>% printp(add_equals=T)`), compared to white.
 
