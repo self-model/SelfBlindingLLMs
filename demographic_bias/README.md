@@ -80,6 +80,50 @@ The scenarios come from the [Anthropic discrim-eval dataset](https://huggingface
 - Genders: male, female
 - Scenarios: kidney_transplant, dating_app_match, flood_insurance_claim, work_visa, etc.
 
+## Dataset Generation
+
+The `discrim-eval-templated.jsonl` dataset is generated from a base template file.
+
+### Pipeline
+
+1. **Base template** (`data/templates.jsonl`): 65 unique scenarios with placeholders
+2. **Nicknames** (`data/scenario_nicknames.yaml`): Human-readable IDs for each scenario
+3. **Generator** (`generate_dataset_from_templates.py`): Expands to all race/gender combinations
+4. **Output** (`data/discrim-eval-templated.jsonl`): 520 records (65 × 4 races × 2 genders)
+
+### Template Format
+
+The base template file contains scenarios with demographic placeholders:
+
+```json
+{
+  "filled_template": "The patient is a {race} {gender}... {Sub} {has} been...",
+  "decision_question_id": 0
+}
+```
+
+Placeholders:
+- `{race}`: white, Black, Hispanic, Asian
+- `{gender}`: male, female
+- `{Sub}/{sub}`: He/She/They (capitalized/lowercase)
+- `{Pos}/{pos}`: His/Her/Their
+- `{Obj}/{obj}`: Him/Her/Them
+- `{reflex}`: himself/herself/themselves
+- `{is}/{has}/{was}`: is/has/was (singular) or are/have/were (neutral)
+
+### Regenerate Dataset
+
+```bash
+cd demographic_bias
+python generate_dataset_from_templates.py --add-nicknames
+```
+
+Or with explicit paths:
+
+```bash
+python generate_dataset_from_templates.py data/templates.jsonl -o data/discrim-eval-templated.jsonl --add-nicknames
+```
+
 ## Prompt Strategies
 
 Six strategies for reducing demographic bias:
