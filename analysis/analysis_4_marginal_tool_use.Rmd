@@ -1,5 +1,5 @@
 ---
-title: "anslysis 4 tool use: marginal probabilities"
+title: "analysis 4 tool use: marginal probabilities"
 output: word_document
 date: "2025-12-10"
 ---
