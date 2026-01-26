@@ -12,11 +12,11 @@ load from a local folder instead.
 
 Usage:
     # Load from OSF (default) - merged mode
-    python build_csv.py --model gpt-4.1
-    python build_csv.py --model qwen2.5-7b-instruct
+    python build_csv.py --model GPT-4.1
+    python build_csv.py --model Qwen2.5-7B-Instruct
 
     # Load from local folder
-    python build_csv.py --model gpt-4.1 --data-path ./results/
+    python build_csv.py --model GPT-4.1 --data-path ./results/
 
     # Legacy: explicit file paths
     python build_csv.py --yn-in FILE --tool-prob-in FILE --tool-result-in FILE --out-csv OUTPUT
@@ -77,12 +77,12 @@ INCLUDED_TOOL = 'run_counterfactual_simulation'
 # Project: https://osf.io/udk5a/
 # Browse: https://osf.io/udk5a/files/osfstorage -> demographic_bias/{model}/
 OSF_FILE_IDS = {
-    "gpt-4.1": {
+    "GPT-4.1": {
         "yn_logits": "6976507b7f5caaf4d7834678",
         "tool_prob": "6976507bfd6c714eae8345ed",
         "tool_result": "697650794bf50c960a44fe48",
     },
-    "qwen2.5-7b-instruct": {
+    "Qwen2.5-7B-Instruct": {
         "yn_logits": "697698ad9b49fe625065c6ab",
         "tool_prob": "697698af53876d3356f22662",
         "tool_result": "697698cb9b49fe625065c6b1",
@@ -912,7 +912,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        choices=["gpt-4.1", "qwen2.5-7b-instruct"],
+        choices=["GPT-4.1", "Qwen2.5-7B-Instruct"],
         help="Model to process (for merged mode with OSF or local folder)",
     )
     parser.add_argument(

@@ -1,14 +1,23 @@
 # Shared helper functions for demographic bias analysis
 # Replaces: loadAndFormatBiasData.R, loadAndFormatBiasToolRespData.R
 
+# Single source of truth: nickname -> full model name (as used in filenames)
+models <- c(
+  "Qwen" = "Qwen2.5-7B-Instruct",
+  "GPT" = "GPT-4.1"
+)
+
 # Load and prepare demographic bias data from merged CSVs
 load_bias_data <- function(model = c("qwen", "gpt", "both")) {
   model <- match.arg(model)
 
-  load_one <- function(path, model_name) {
+  load_one <- function(nickname) {
+    full_name <- models[[nickname]]
+    path <- sprintf("../demographic_bias/results/demographic_bias_processed_%s.csv", full_name)
     read.csv(path) %>%
       mutate(
-        model = model_name,
+        model = nickname,
+        model_full = full_name,
         vignette = decision_question_id,
         prompt = prompt_format,
         response = yes_logit - no_logit,
@@ -16,8 +25,8 @@ load_bias_data <- function(model = c("qwen", "gpt", "both")) {
       )
   }
 
-  qwen <- load_one("../demographic_bias/results/demographic_bias_processed_qwen2.5-7b-instruct.csv", "Qwen")
-  gpt <- load_one("../demographic_bias/results/demographic_bias_processed_gpt-4.1.csv", "GPT")
+  qwen <- load_one("Qwen")
+  gpt <- load_one("GPT")
 
   switch(model,
          qwen = qwen,
@@ -61,15 +70,18 @@ summarize_bias <- function(df) {
 load_tool_response_data <- function(model = c("qwen", "gpt", "both")) {
   model <- match.arg(model)
 
-  load_one <- function(path, model_name) {
+  load_one <- function(nickname) {
+    full_name <- models[[nickname]]
+    path <- sprintf("../demographic_bias/results/demographic_bias_processed_%s.csv", full_name)
     read.csv(path) %>%
-      mutate(model = model_name,
+      mutate(model = nickname,
+             model_full = full_name,
              vignette = decision_question_id,
              prompt = prompt_format)
   }
 
-  qwen <- load_one("../demographic_bias/results/demographic_bias_processed_qwen2.5-7b-instruct.csv", "Qwen")
-  gpt <- load_one("../demographic_bias/results/demographic_bias_processed_gpt-4.1.csv", "GPT")
+  qwen <- load_one("Qwen")
+  gpt <- load_one("GPT")
 
   switch(model,
          qwen = qwen,
@@ -83,15 +95,18 @@ load_tool_response_data <- function(model = c("qwen", "gpt", "both")) {
 # To: model_response (Yes/No), yes_logit, no_logit
 pivot_conditional_logits <- function(df) {
   # Create long format for Yes and No responses
+  # Note: This overwrites the original yes_logit/no_logit with the tool-conditioned values
   yes_df <- df %>%
-    dplyr::select(-yes_logit_when_tool_says_no, -no_logit_when_tool_says_no) %>%
+    dplyr::select(-yes_logit, -no_logit,
+                  -yes_logit_when_tool_says_no, -no_logit_when_tool_says_no) %>%
     rename(yes_logit = yes_logit_when_tool_says_yes,
            no_logit = no_logit_when_tool_says_yes) %>%
     mutate(model_response = "Yes",
            tool_desc = "run counterfactual simulation")
 
   no_df <- df %>%
-    dplyr::select(-yes_logit_when_tool_says_yes, -no_logit_when_tool_says_yes) %>%
+    dplyr::select(-yes_logit, -no_logit,
+                  -yes_logit_when_tool_says_yes, -no_logit_when_tool_says_yes) %>%
     rename(yes_logit = yes_logit_when_tool_says_no,
            no_logit = no_logit_when_tool_says_no) %>%
     mutate(model_response = "No",

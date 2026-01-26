@@ -2,7 +2,6 @@
 title: "analysis 2 undo race/gender bias"
 output: word_document
 date: "2025-12-10"
-bibliography: references.bib
 ---
 
 ```{r setup, include=FALSE}
@@ -364,20 +363,25 @@ create_coef_plot <- function(coef_data, prompt_name, default_ref, prompt_color) 
   return(all_coefs)
 }
 
-# Generate figures and store coefficients
-gpt_coefs <- create_bias_figure(
-  GPT.Bias.response_by_prompt,
-  GPT.Bias.mean_abs_diff,
-  "GPT-4.1",
-  'figures/demographic_bias/GPT4.1/combined_scatter_coef_barplot.svg'
+# Generate figures and store coefficients using models from helpers.R
+bias_data_list <- list(
+  "GPT" = list(response = GPT.Bias.response_by_prompt, mean_abs_diff = GPT.Bias.mean_abs_diff),
+  "Qwen" = list(response = Qwen.Bias.response_by_prompt, mean_abs_diff = Qwen.Bias.mean_abs_diff)
 )
 
-qwen_coefs <- create_bias_figure(
-  Qwen.Bias.response_by_prompt,
-  Qwen.Bias.mean_abs_diff,
-  "Qwen2.5-7B-Instruct",
-  'figures/demographic_bias/Qwen2.5-7B/combined_scatter_coef_barplot.svg'
-)
+all_coefs_list <- list()
+for (nickname in names(models)) {
+  coefs <- create_bias_figure(
+    bias_data_list[[nickname]]$response,
+    bias_data_list[[nickname]]$mean_abs_diff,
+    models[[nickname]],
+    sprintf('figures/demographic_bias/%s/combined_scatter_coef_barplot.png', models[[nickname]])
+  )
+  all_coefs_list[[nickname]] <- coefs
+}
+
+gpt_coefs <- all_coefs_list[["GPT"]]
+qwen_coefs <- all_coefs_list[["Qwen"]]
 
 # Combine all coefficients for easy access
 all_bias_coefs <- bind_rows(gpt_coefs, qwen_coefs)

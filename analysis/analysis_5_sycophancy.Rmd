@@ -32,6 +32,7 @@ fs::dir_create("figures/sycophancy", recurse = TRUE)
 
 
 ```{r load data}
+source('helpers.R')
 source('loadAndFormatSycophancyData.R')
 ```
 
@@ -242,9 +243,9 @@ library(patchwork)
 gpt_grid <- gpt_ignore | gpt_dont | gpt_if
 qwen_grid <- qwen_ignore | qwen_dont | qwen_if
 
-# Save
-ggsave('figures/sycophancy/GPT_sycophancy.png', plot = gpt_grid, height = 5, width = 15, dpi = 300)
-ggsave('figures/sycophancy/Qwen_sycophancy.png', plot = qwen_grid, height = 5, width = 15, dpi = 300)
+# Save using models from helpers.R
+ggsave(sprintf('figures/sycophancy/%s_sycophancy.png', models[["GPT"]]), plot = gpt_grid, height = 5, width = 15, dpi = 300)
+ggsave(sprintf('figures/sycophancy/%s_sycophancy.png', models[["Qwen"]]), plot = qwen_grid, height = 5, width = 15, dpi = 300)
 
 ```
 
@@ -359,19 +360,19 @@ create_sycophancy_barplot <- function(data_original, data_blinded, model_name, o
   return(p)
 }
 
-# Create barplots
+# Create barplots using models from helpers.R
 gpt_barplot <- create_sycophancy_barplot(
-  barplot_data_original %>% filter(prompt !='Neutral'), 
-  barplot_data_blinded %>% filter(prompt !='Neutral'), 
+  barplot_data_original %>% filter(prompt !='Neutral'),
+  barplot_data_blinded %>% filter(prompt !='Neutral'),
   "GPT",
-  'figures/sycophancy/GPT_sycophancy_barplot.png'
+  sprintf('figures/sycophancy/%s_sycophancy_barplot.png', models[["GPT"]])
 )
 
 qwen_barplot <- create_sycophancy_barplot(
-  barplot_data_original %>% filter(prompt !='Neutral'), 
-  barplot_data_blinded %>% filter(prompt !='Neutral'), 
+  barplot_data_original %>% filter(prompt !='Neutral'),
+  barplot_data_blinded %>% filter(prompt !='Neutral'),
   "Qwen",
-  'figures/sycophancy/Qwen_sycophancy_barplot.png'
+  sprintf('figures/sycophancy/%s_sycophancy_barplot.png', models[["Qwen"]])
 )
 
 print(gpt_barplot)
@@ -463,13 +464,13 @@ create_sycophancy_complete_figure <- function(data, mean_abs_data_original, mean
   return(combined)
 }
 
-# Create complete figures
+# Create complete figures using models from helpers.R
 gpt_complete <- create_sycophancy_complete_figure(
   combined_sycophancy_wide,
   barplot_data_original,
   barplot_data_blinded,
   "GPT",
-  'figures/sycophancy/GPT_sycophancy_complete.png'
+  sprintf('figures/sycophancy/%s_sycophancy_complete.png', models[["GPT"]])
 )
 
 qwen_complete <- create_sycophancy_complete_figure(
@@ -477,7 +478,7 @@ qwen_complete <- create_sycophancy_complete_figure(
   barplot_data_original,
   barplot_data_blinded,
   "Qwen",
-  'figures/sycophancy/Qwen_sycophancy_complete.png'
+  sprintf('figures/sycophancy/%s_sycophancy_complete.png', models[["Qwen"]])
 )
 
 ```

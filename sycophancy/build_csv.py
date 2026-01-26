@@ -9,9 +9,9 @@ By default, loads data from OSF for reproducibility. Use --data-path to
 load from a local folder instead.
 
 Usage:
-    python build_csv.py --model gpt-4.1                      # Uses OSF (default)
-    python build_csv.py --model qwen2.5-7b-instruct          # Uses OSF (default)
-    python build_csv.py --model gpt-4.1 --data-path ./data/  # Uses local folder
+    python build_csv.py --model GPT-4.1                      # Uses OSF (default)
+    python build_csv.py --model Qwen2.5-7B-Instruct          # Uses OSF (default)
+    python build_csv.py --model GPT-4.1 --data-path ./data/  # Uses local folder
 """
 
 import argparse
@@ -38,8 +38,8 @@ INCLUDED_TOOL = "run_counterfactual_simulation"
 #   tool_use_probs: 6972a57af18888e2bfe40b34
 OSF_FILE_IDS = {
     # Default: all_runs files (individual runs with run_idx column)
-    # https://osf.io/udk5a/files/osfstorage -> sycophancy/gpt-4.1/
-    "gpt-4.1": {
+    # https://osf.io/udk5a/files/osfstorage -> sycophancy/GPT-4.1/
+    "GPT-4.1": {
         "first_person": "6972a685f18888e2bfe40bda",  # *_forced_choice_*_all_runs.jsonl (60k rows)
         "third_person": "6972a6abddebc034afe4081b",  # *_third_person_*_all_runs.jsonl (12k rows)
         "tool_result": "6972a632f18888e2bfe40baa",   # *_tool_result_*_all_runs.jsonl (60k rows)
@@ -47,7 +47,7 @@ OSF_FILE_IDS = {
     },
     # https://osf.io/udk5a/files/osfstorage -> sycophancy/Qwen2.5-7B-Instruct/
     # (Qwen has single runs, no all_runs/aggregated distinction)
-    "qwen2.5-7b-instruct": {
+    "Qwen2.5-7B-Instruct": {
         "first_person": "6972a38d363ebcb72652d6ef",  # *_forced_choice_*.jsonl
         "third_person": "6972a36d7f2984f0d052d7c5",  # *_third_person_*.jsonl
         "tool_result": "6972a36b8b38dc4cf4e407f8",   # *_tool_result_*.jsonl
@@ -467,8 +467,8 @@ def main():
         "--model",
         type=str,
         required=True,
-        choices=["gpt-4.1", "qwen2.5-7b-instruct"],
-        help="Model to process (gpt-4.1 or qwen2.5-7b-instruct)",
+        choices=["GPT-4.1", "Qwen2.5-7B-Instruct"],
+        help="Model to process (GPT-4.1 or Qwen2.5-7B-Instruct)",
     )
     parser.add_argument(
         "--data-path",

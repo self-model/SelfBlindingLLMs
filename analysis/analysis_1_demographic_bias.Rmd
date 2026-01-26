@@ -51,13 +51,7 @@ combined_data <- GPT.Bias.response_by_prompt %>%
   dplyr::select(model, vignette, prompt, gender, race, response, removed_response) %>%
   rbind(Qwen.Bias.response_by_prompt %>%
     dplyr::select(model, vignette, prompt, gender, race, response, removed_response)) %>%
-  filter(prompt == 'default') 
-
-model_labels <- c(
-  "GPT" = "GPT-4.1",
-  "Qwen" = "Qwen2.5-7B-Instruct"
-)
-
+  filter(prompt == 'default')
 
 # Function to create plot for a model
 create_plot <- function(data, model_name) {
@@ -73,7 +67,7 @@ create_plot <- function(data, model_name) {
     labs(
       x = "gender and race removed",
       y = "gender and race included",
-      title = model_labels[model_name]
+      title = models[model_name]
     ) +
     theme_minimal() +
     theme(
@@ -86,9 +80,9 @@ create_plot <- function(data, model_name) {
 
 
 # Create and save plots for each model
-for (model_name in names(model_labels)) {
-  p <- create_plot(combined_data, model_name)
-  ggsave(sprintf("figures/demographic_bias/%s/default_plot.png", model_labels[model_name]),
+for (nickname in names(models)) {
+  p <- create_plot(combined_data, nickname)
+  ggsave(sprintf("figures/demographic_bias/%s/default_plot.png", models[[nickname]]),
          p, width = 3, height = 3, dpi = 300)
 }
 
@@ -221,74 +215,46 @@ plot_data <- model_coefficients %>%
     star_y = estimate + std.error + 0.05 * max(abs(estimate))
   )
 
-# Create plot for GPT4.1
-p_gpt <- plot_data %>%
-  filter(model == "GPT") %>%
-  ggplot(aes(x = term_clean, y = estimate)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  geom_point(size = 3, color = "black") +
-  geom_errorbar(
-    aes(ymin = estimate - std.error, 
-        ymax = estimate + std.error),
-    width = 0.2,
-    linewidth = 0.8,
-    color = "black"
-  ) +
-  geom_text(
-    aes(label = significance, y = star_y),
-    size = 5,
-    color = "black",
-    vjust = 0
-  ) +
-  labs(
-    x = NULL,
-    y = "β"
-  ) +
-  theme_minimal() +
-  coord_cartesian(clip = "off") +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
-    axis.text.x = element_text(size = 10),
-    panel.grid.major.x = element_blank(),
-    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Add extra top margin
-  )
+# Function to create coefficient plot for a model
+create_coef_plot <- function(data, model_name) {
+  data %>%
+    filter(model == model_name) %>%
+    ggplot(aes(x = term_clean, y = estimate)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_point(size = 3, color = "black") +
+    geom_errorbar(
+      aes(ymin = estimate - std.error,
+          ymax = estimate + std.error),
+      width = 0.2,
+      linewidth = 0.8,
+      color = "black"
+    ) +
+    geom_text(
+      aes(label = significance, y = star_y),
+      size = 5,
+      color = "black",
+      vjust = 0
+    ) +
+    labs(
+      x = NULL,
+      y = "β"
+    ) +
+    theme_minimal() +
+    coord_cartesian(clip = "off") +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+      axis.text.x = element_text(size = 10),
+      panel.grid.major.x = element_blank(),
+      plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+    )
+}
 
-# Create plot for Qwen2.5-7B
-p_qwen <- plot_data %>%
-  filter(model == "Qwen") %>%
-  ggplot(aes(x = term_clean, y = estimate)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  geom_point(size = 3, color = "black") +
-  geom_errorbar(
-    aes(ymin = estimate - std.error, 
-        ymax = estimate + std.error),
-    width = 0.2,
-    linewidth = 0.8,
-    color = "black"
-  ) +
-  geom_text(
-    aes(label = significance, y = star_y),
-    size = 5,
-    color = "black",
-    vjust = 0
-  ) +
-  labs(
-    x = NULL,
-    y = "β"
-  ) +
-  theme_minimal() +
-  coord_cartesian(clip = "off") +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
-    axis.text.x = element_text(size = 10),
-    panel.grid.major.x = element_blank(),
-    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Add extra top margin
-  )
-
-
-# Or save them
-ggsave("figures/demographic_bias/GPT4.1/coefficients.png", p_gpt, width = 3, height = 2, dpi = 300)
-ggsave("figures/demographic_bias/Qwen2.5-7B/coefficients.png", p_qwen, width = 3, height = 2, dpi = 300)
+# Create and save coefficient plots for each model
+for (nickname in names(models)) {
+  p <- create_coef_plot(plot_data, nickname)
+  ggsave(sprintf("figures/demographic_bias/%s/coefficients.png", models[[nickname]]),
+         p, width = 3, height = 2, dpi = 300)
+}
 
 
 

@@ -80,41 +80,32 @@ qwen_counts_df <- all_tool_calls %>%
   group_by(prompt) %>%
   summarise(prop_tool_use = mean(tool_prob))
 
-# Create GPT tool use plot
-ggplot(gpt_counts_df %>%
-         filter(prompt %in% c('default','dont_discriminate','if_you_didnt_know','ignore','removed')), aes(x = prompt, y = prop_tool_use, fill = prompt)) +
-  geom_col() +
-  scale_fill_manual(values = prompt_colors, labels = prompt_labels) +
-  scale_x_discrete(labels = prompt_labels) +
-  labs(
-    x = "",
-    y = "p(self-call)"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  )
+# Function to create tool use plot
+create_tool_use_plot <- function(counts_df) {
+  ggplot(counts_df %>%
+           filter(prompt %in% c('default','dont_discriminate','if_you_didnt_know','ignore','removed')),
+         aes(x = prompt, y = prop_tool_use, fill = prompt)) +
+    geom_col() +
+    scale_fill_manual(values = prompt_colors, labels = prompt_labels) +
+    scale_x_discrete(labels = prompt_labels) +
+    labs(
+      x = "",
+      y = "p(self-call)"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+}
 
-ggsave('figures/self-calls/GPT4.1/proportion_tool_use_demographic_bias.png', height = 2.5, width = 4, dpi = 300)
-
-# Create Qwen tool use plot
-ggplot(qwen_counts_df %>%
-         filter(prompt %in% c('default','dont_discriminate','if_you_didnt_know','ignore','removed')), aes(x = prompt, y = prop_tool_use, fill = prompt)) +
-  geom_col() +
-  scale_fill_manual(values = prompt_colors, labels = prompt_labels) +
-  scale_x_discrete(labels = prompt_labels) +
-  labs(
-    x = "",
-    y = "p(self-call)"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  )
-
-ggsave('figures/self-calls/Qwen2.5-7B/proportion_tool_use_demographic_bias.png', height = 2.5, width = 4, dpi = 300)
+# Create and save tool use plots for each model
+counts_list <- list("GPT" = gpt_counts_df, "Qwen" = qwen_counts_df)
+for (nickname in names(models)) {
+  p <- create_tool_use_plot(counts_list[[nickname]])
+  ggsave(sprintf('figures/self-calls/%s/proportion_tool_use_demographic_bias.png', models[[nickname]]),
+         p, height = 2.5, width = 4, dpi = 300)
+}
 
 # Calculate proportions of demographic information inclusion
 inclusion_props <- all_tool_calls %>%
@@ -144,61 +135,40 @@ inclusion_df <- inclusion_props %>%
     )
   )
 
-# GPT inclusion plot
-inclusion_df %>%
-  filter(model == 'GPT') %>%
-  filter(!prompt %in% c( "redacted")) %>%
-  ggplot(aes(x = prompt, y = proportion, 
-             color = prompt, shape = inclusion_type)) +
-  geom_point(size = 2.5, alpha = 0.8, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = prompt_colors, labels = prompt_labels) +
-  scale_x_discrete(labels = prompt_labels) +
-  scale_shape_manual(
-    values = c("Race" = 16, "Gender" = 17, "Gendered Pronouns" = 15),
-    name = "Inclusion Type"
-  ) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(
-    x = "",
-    y = "p(mentioned | self-call)",
-    color = ""
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  guides(color = "none")
+# Function to create inclusion plot
+create_inclusion_plot <- function(data, model_nickname) {
+  data %>%
+    filter(model == model_nickname) %>%
+    filter(!prompt %in% c("redacted")) %>%
+    ggplot(aes(x = prompt, y = proportion,
+               color = prompt, shape = inclusion_type)) +
+    geom_point(size = 2.5, alpha = 0.8, position = position_dodge(width = 0.3)) +
+    scale_color_manual(values = prompt_colors, labels = prompt_labels) +
+    scale_x_discrete(labels = prompt_labels) +
+    scale_shape_manual(
+      values = c("Race" = 16, "Gender" = 17, "Gendered Pronouns" = 15),
+      name = "Inclusion Type"
+    ) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+    labs(
+      x = "",
+      y = "p(mentioned | self-call)",
+      color = ""
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    guides(color = "none")
+}
 
-ggsave('figures/self-calls/GPT4.1/proportion_included_demographic_bias.png', height = 3, width = 4, dpi = 300)
-
-# Qwen inclusion plot
-inclusion_df %>%
-  filter(model == 'Qwen') %>%
-  filter(!prompt %in% c("redacted")) %>%
-  ggplot(aes(x = prompt, y = proportion, 
-             color = prompt, shape = inclusion_type)) +
-  geom_point(size = 2.5, alpha = 0.8, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = prompt_colors, labels = prompt_labels) +
-  scale_x_discrete(labels = prompt_labels) +
-  scale_shape_manual(
-    values = c("Race" = 16, "Gender" = 17, "Gendered Pronouns" = 15),
-    name = "Inclusion Type"
-  ) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(
-    x = "",
-   y = "p(mentioned | self-call)",
-   color = ""
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  guides(color = "none")
-
-ggsave('figures/self-calls/Qwen2.5-7B/proportion_included_demographic_bias.png', height = 3, width = 4, dpi = 300)
+# Create and save inclusion plots for each model
+for (nickname in names(models)) {
+  p <- create_inclusion_plot(inclusion_df, nickname)
+  ggsave(sprintf('figures/self-calls/%s/proportion_included_demographic_bias.png', models[[nickname]]),
+         p, height = 3, width = 4, dpi = 300)
+}
 ```
 
 Both models almost never self-called when gender and race information were not included in the scenario description (proportion of self-calls for Qwen: `r qwen_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='removed')%>%pull(prop_tool_use)%>%printnum()`), and rarely when no debiasing instruction was given (Qwen: `r qwen_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='default')%>%pull(prop_tool_use)%>%printnum()`), but self-called reliably more when instructed to ignore race and gender information (Qwen: `r qwen_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='ignore')%>%pull(prop_tool_use)%>%printnum()`) or to estimate their decision had they not known the race and gender of the individual (Qwen: `r qwen_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='if_you_didnt_know')%>%pull(prop_tool_use)%>%printnum()`). Interestingly, figures for the "Don't discriminate" instruction were low (Qwen: `r qwen_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`; GPT: `r gpt_counts_df%>%filter(prompt=='dont_discriminate')%>%pull(prop_tool_use)%>%printnum()`).

@@ -1,28 +1,23 @@
-Qwen.sycophancy_df <- read.csv('../sycophancy/results/sycophancy_processed_qwen2.5-7b-instruct.csv') %>%
-  rename(prompt=instruction_nickname) %>%
-  mutate(blinded_pA = exp(blinded_model_a_logit)/
-           (exp(blinded_model_a_logit)+exp(blinded_model_b_logit)),
-         pA_given_A = exp(a_logit_when_blinded_model_says_a)/
-           (exp(a_logit_when_blinded_model_says_a)+
-              exp(b_logit_when_blinded_model_says_a)),
-         pA_given_B = exp(a_logit_when_blinded_model_says_b)/
-           (exp(a_logit_when_blinded_model_says_b)+
-              exp(b_logit_when_blinded_model_says_b)),
-         marginal_pA = blinded_pA*pA_given_A + (1-blinded_pA)*pA_given_B,
-         marginal_response = log(marginal_pA)-log((1-marginal_pA)))
+# Load sycophancy data using models from helpers.R (must be sourced first)
+load_sycophancy_raw <- function(nickname) {
+  full_name <- models[[nickname]]
+  path <- sprintf('../sycophancy/results/sycophancy_processed_%s.csv', full_name)
+  read.csv(path) %>%
+    rename(prompt=instruction_nickname) %>%
+    mutate(blinded_pA = exp(blinded_model_a_logit)/
+             (exp(blinded_model_a_logit)+exp(blinded_model_b_logit)),
+           pA_given_A = exp(a_logit_when_blinded_model_says_a)/
+             (exp(a_logit_when_blinded_model_says_a)+
+                exp(b_logit_when_blinded_model_says_a)),
+           pA_given_B = exp(a_logit_when_blinded_model_says_b)/
+             (exp(a_logit_when_blinded_model_says_b)+
+                exp(b_logit_when_blinded_model_says_b)),
+           marginal_pA = blinded_pA*pA_given_A + (1-blinded_pA)*pA_given_B,
+           marginal_response = log(marginal_pA)-log((1-marginal_pA)))
+}
 
-GPT.sycophancy_df <- read.csv('../sycophancy/results/sycophancy_processed_gpt-4.1.csv') %>%
-  rename(prompt=instruction_nickname) %>%
-  mutate(blinded_pA = exp(blinded_model_a_logit)/
-           (exp(blinded_model_a_logit)+exp(blinded_model_b_logit)),
-         pA_given_A = exp(a_logit_when_blinded_model_says_a)/
-           (exp(a_logit_when_blinded_model_says_a)+
-              exp(b_logit_when_blinded_model_says_a)),
-         pA_given_B = exp(a_logit_when_blinded_model_says_b)/
-           (exp(a_logit_when_blinded_model_says_b)+
-              exp(b_logit_when_blinded_model_says_b)),
-         marginal_pA = blinded_pA*pA_given_A + (1-blinded_pA)*pA_given_B,
-         marginal_response = log(marginal_pA)-log((1-marginal_pA)))
+Qwen.sycophancy_df <- load_sycophancy_raw("Qwen")
+GPT.sycophancy_df <- load_sycophancy_raw("GPT")
 
 # Process Qwen data
 Qwen.sycophancy_processed <- Qwen.sycophancy_df %>%
