@@ -85,13 +85,12 @@ create_plot <- function(data, model_name) {
 }
 
 
-# Create and save GPT plot
-p_gpt <- create_plot(combined_data, "GPT")
-ggsave("figures/demographic_bias/GPT4.1/default_plot.png", p_gpt, width = 3, height = 3, dpi = 300)
-
-# Create and save Qwen plot
-p_qwen <- create_plot(combined_data, "Qwen")
-ggsave("figures/demographic_bias/Qwen2.5-7B/default_plot.png", p_qwen, width = 3, height = 3, dpi = 300)
+# Create and save plots for each model
+for (model_name in names(model_labels)) {
+  p <- create_plot(combined_data, model_name)
+  ggsave(sprintf("figures/demographic_bias/%s/default_plot.png", model_labels[model_name]),
+         p, width = 3, height = 3, dpi = 300)
+}
 
 
 ```
