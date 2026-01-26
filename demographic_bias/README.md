@@ -61,7 +61,7 @@ Language models may exhibit demographic bias when making yes/no decisions about 
 
 ## Data
 
-The scenarios come from the [Anthropic discrim-eval dataset](https://huggingface.co/datasets/Anthropic/discrim-eval), templated with explicit demographics.
+The scenarios come from the [Anthropic discrim-eval dataset](https://huggingface.co/datasets/Anthropic/discrim-eval), templated with explicit demographics. The templated dataset is available on HuggingFace Hub: [self-model/discrim-eval-templated](https://huggingface.co/datasets/self-model/discrim-eval-templated).
 
 **Data format** (`data/discrim-eval-templated.jsonl`):
 ```json
