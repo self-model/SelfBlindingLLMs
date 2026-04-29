@@ -300,40 +300,8 @@ def run_full_inference(
 # Main
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Run tool-use probability inference via HuggingFace Transformers"
-    )
-    parser.add_argument(
-        "--model", type=str, required=True,
-        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)"
-    )
-    parser.add_argument(
-        "--data_path", type=str, default=None,
-        help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)"
-    )
-    parser.add_argument(
-        "--tool_prompts_path", type=str, default=None,
-        help="Path to tool prompts YAML file"
-    )
-    parser.add_argument(
-        "--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
-        help="Directory for output files"
-    )
-    parser.add_argument(
-        "--inspect", action="store_true",
-        help="Run inspection mode: show prompts and scores for a few samples"
-    )
-    parser.add_argument(
-        "--inspect_n", type=int, default=3,
-        help="Number of samples to inspect (default: 3)"
-    )
-    parser.add_argument(
-        "--seed", type=int, default=42,
-        help="Random seed"
-    )
-    args = parser.parse_args()
-
+def run(model, tokenizer, args):
+    """Run inference with a pre-loaded model and tokenizer."""
     # Setup
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -369,10 +337,6 @@ def main():
     data = Dataset.from_list([condition_to_dict(c) for c in conditions])
     print(f"  Created dataset with columns: {data.column_names}")
 
-    # Load model and tokenizer
-    print(f"\nLoading model: {args.model}")
-    model, tokenizer = load_model_and_tokenizer(args.model)
-
     # Get tool use start token ID
     tool_use_start_token_id = get_tool_use_start_token_id(args.model)
     print(f"Tool use start token ID: {tool_use_start_token_id}")
@@ -396,6 +360,46 @@ def main():
             data, tokenizer, model, tool_prompts, tool_use_start_token_id,
             output_path, args.model
         )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run tool-use probability inference via HuggingFace Transformers"
+    )
+    parser.add_argument(
+        "--model", type=str, required=True,
+        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)"
+    )
+    parser.add_argument(
+        "--data_path", type=str, default=None,
+        help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)"
+    )
+    parser.add_argument(
+        "--tool_prompts_path", type=str, default=None,
+        help="Path to tool prompts YAML file"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
+        help="Directory for output files"
+    )
+    parser.add_argument(
+        "--inspect", action="store_true",
+        help="Run inspection mode: show prompts and scores for a few samples"
+    )
+    parser.add_argument(
+        "--inspect_n", type=int, default=3,
+        help="Number of samples to inspect (default: 3)"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help="Random seed"
+    )
+    args = parser.parse_args()
+
+    print(f"\nLoading model: {args.model}")
+    model, tokenizer = load_model_and_tokenizer(args.model)
+
+    run(model, tokenizer, args)
 
 
 if __name__ == "__main__":

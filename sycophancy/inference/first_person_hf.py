@@ -216,6 +216,57 @@ def run_full_inference(data: Dataset, tokenizer, model, you_token_ids, them_toke
 # Main
 # =============================================================================
 
+def run(model, tokenizer, args):
+    """Run inference with a pre-loaded model and tokenizer."""
+    # Setup
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    # Resolve data path
+    data_path = Path(args.data_path) if args.data_path else DEFAULT_SYCOPHANCY_DATA
+    if not data_path.exists():
+        print(f"Error: Data file not found: {data_path}")
+        sys.exit(1)
+
+    # Load scenarios and generate conditions
+    print("Loading scenarios...")
+    scenarios = load_scenarios(str(data_path))
+    print(f"  Loaded {len(scenarios)} scenarios")
+
+    print("Generating conditions...")
+    experiment = generate_full_experiment(scenarios)
+    conditions = experiment['conditions']
+    print(f"  Generated {len(conditions)} conditions")
+
+    # Convert to Dataset with computed properties
+    data = Dataset.from_list([condition_to_dict(c) for c in conditions])
+    print(f"  Created dataset with columns: {data.column_names}")
+
+    # Get token IDs
+    you_token_ids, them_token_ids = get_you_them_token_ids(tokenizer)
+    print(f"You tokens: {you_token_ids}")
+    print(f"Them tokens: {them_token_ids}")
+
+    # Run appropriate mode
+    if args.inspect:
+        run_inspect_mode(
+            data, tokenizer, model, you_token_ids, them_token_ids,
+            args.inspect_n, args.seed
+        )
+        print("Exiting after inspect mode. Run without --inspect for full inference.")
+    else:
+        # Setup output file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_nickname = args.model.split('/')[-1]
+        output_dir = Path(args.output_dir)
+        output_path = output_dir / f"{timestamp}_sycophancy_first_person_{model_nickname}.jsonl"
+
+        run_full_inference(
+            data, tokenizer, model, you_token_ids, them_token_ids,
+            output_path, args.model
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run sycophancy forced-choice inference via HuggingFace Transformers"
@@ -250,57 +301,10 @@ def main():
     )
     args = parser.parse_args()
 
-    # Setup
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
-    # Resolve data path
-    data_path = Path(args.data_path) if args.data_path else DEFAULT_SYCOPHANCY_DATA
-    if not data_path.exists():
-        print(f"Error: Data file not found: {data_path}")
-        sys.exit(1)
-
-    # Load scenarios and generate conditions
-    print("Loading scenarios...")
-    scenarios = load_scenarios(str(data_path))
-    print(f"  Loaded {len(scenarios)} scenarios")
-
-    print("Generating conditions...")
-    experiment = generate_full_experiment(scenarios)
-    conditions = experiment['conditions']
-    print(f"  Generated {len(conditions)} conditions")
-
-    # Convert to Dataset with computed properties
-    data = Dataset.from_list([condition_to_dict(c) for c in conditions])
-    print(f"  Created dataset with columns: {data.column_names}")
-
-    # Load model and tokenizer
     print(f"\nLoading model: {args.model}")
     model, tokenizer = load_model_and_tokenizer(args.model)
 
-    # Get token IDs
-    you_token_ids, them_token_ids = get_you_them_token_ids(tokenizer)
-    print(f"You tokens: {you_token_ids}")
-    print(f"Them tokens: {them_token_ids}")
-
-    # Run appropriate mode
-    if args.inspect:
-        run_inspect_mode(
-            data, tokenizer, model, you_token_ids, them_token_ids,
-            args.inspect_n, args.seed
-        )
-        print("Exiting after inspect mode. Run without --inspect for full inference.")
-    else:
-        # Setup output file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_nickname = args.model.split('/')[-1]
-        output_dir = Path(args.output_dir)
-        output_path = output_dir / f"{timestamp}_sycophancy_first_person_{model_nickname}.jsonl"
-
-        run_full_inference(
-            data, tokenizer, model, you_token_ids, them_token_ids,
-            output_path, args.model
-        )
+    run(model, tokenizer, args)
 
 
 if __name__ == "__main__":

@@ -248,23 +248,12 @@ def run_full_inference(data: Dataset, tokenizer, model, yes_token_ids, no_token_
 # Main
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(description="Run demographic bias inference via HuggingFace Transformers")
-    parser.add_argument("--model", type=str, required=True,
-                        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)")
-    parser.add_argument("--data_path", type=str, default=None,
-                        help="Path to scenarios JSONL file")
-    parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
-                        help="Directory for output files")
-    parser.add_argument("--inspect", action="store_true",
-                        help="Run inspection mode and exit")
-    parser.add_argument("--inspect_n", type=int, default=3,
-                        help="Number of samples to inspect")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_scenarios", type=int, default=None,
-                        help="Limit number of scenarios (for testing)")
-    args = parser.parse_args()
+def run(model, tokenizer, args):
+    """Run inference with a pre-loaded model and tokenizer.
 
+    Lets a driver loop reuse one model across many tasks. CLI users go
+    through main(), which loads the model and then calls this.
+    """
     # Setup
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -288,10 +277,6 @@ def main():
     data = Dataset.from_list(scenarios)
     print(f"  Dataset columns: {data.column_names}")
 
-    # Load model and tokenizer
-    print(f"\nLoading model: {args.model}")
-    model, tokenizer = load_model_and_tokenizer(args.model)
-
     # Get token IDs
     yes_token_ids, no_token_ids = get_yes_no_token_ids(tokenizer)
     print(f"Yes tokens: {yes_token_ids}")
@@ -310,6 +295,29 @@ def main():
 
         run_full_inference(data, tokenizer, model, yes_token_ids, no_token_ids,
                            output_path, args.model)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run demographic bias inference via HuggingFace Transformers")
+    parser.add_argument("--model", type=str, required=True,
+                        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)")
+    parser.add_argument("--data_path", type=str, default=None,
+                        help="Path to scenarios JSONL file")
+    parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
+                        help="Directory for output files")
+    parser.add_argument("--inspect", action="store_true",
+                        help="Run inspection mode and exit")
+    parser.add_argument("--inspect_n", type=int, default=3,
+                        help="Number of samples to inspect")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n_scenarios", type=int, default=None,
+                        help="Limit number of scenarios (for testing)")
+    args = parser.parse_args()
+
+    print(f"\nLoading model: {args.model}")
+    model, tokenizer = load_model_and_tokenizer(args.model)
+
+    run(model, tokenizer, args)
 
 
 if __name__ == "__main__":

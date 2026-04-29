@@ -327,31 +327,14 @@ def run_full_inference(data: Dataset, tool_prompts: list, tokenizer, model,
 # Main
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(description="Run demographic bias tool-result inference via HuggingFace")
-    parser.add_argument("--model", type=str, required=True,
-                        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)")
-    parser.add_argument("--data_path", type=str, default=None,
-                        help="Path to scenarios JSONL file")
-    parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
-                        help="Directory for output files")
-    parser.add_argument("--tool_prompts_path", type=str, default=str(DEFAULT_TOOL_PROMPTS_PATH),
-                        help="Path to tool descriptions YAML file")
-    parser.add_argument("--inspect", action="store_true",
-                        help="Run inspection mode and exit")
-    parser.add_argument("--inspect_n", type=int, default=2,
-                        help="Number of samples to inspect")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_scenarios", type=int, default=None,
-                        help="Limit number of scenarios (for testing)")
-    args = parser.parse_args()
-
+def run(model, tokenizer, args):
+    """Run inference with a pre-loaded model and tokenizer."""
     # Setup
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     # Load tool prompts
-    tool_prompts_path = Path(args.tool_prompts_path)
+    tool_prompts_path = Path(args.tool_prompts_path) if args.tool_prompts_path else DEFAULT_TOOL_PROMPTS_PATH
     tool_prompts = load_tool_prompts(tool_prompts_path)
     print(f"Loaded {len(tool_prompts)} tool prompts: {[tp['name'] for tp in tool_prompts]}")
 
@@ -374,10 +357,6 @@ def main():
     data = Dataset.from_list(scenarios)
     print(f"  Dataset columns: {data.column_names}")
 
-    # Load model and tokenizer
-    print(f"\nLoading model: {args.model}")
-    model, tokenizer = load_model_and_tokenizer(args.model)
-
     # Get token IDs
     yes_token_ids, no_token_ids = get_yes_no_token_ids(tokenizer)
     print(f"Yes tokens: {yes_token_ids}")
@@ -396,6 +375,31 @@ def main():
 
         run_full_inference(data, tool_prompts, tokenizer, model,
                            yes_token_ids, no_token_ids, output_path, args.model)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run demographic bias tool-result inference via HuggingFace")
+    parser.add_argument("--model", type=str, required=True,
+                        help="HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct)")
+    parser.add_argument("--data_path", type=str, default=None,
+                        help="Path to scenarios JSONL file")
+    parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
+                        help="Directory for output files")
+    parser.add_argument("--tool_prompts_path", type=str, default=str(DEFAULT_TOOL_PROMPTS_PATH),
+                        help="Path to tool descriptions YAML file")
+    parser.add_argument("--inspect", action="store_true",
+                        help="Run inspection mode and exit")
+    parser.add_argument("--inspect_n", type=int, default=2,
+                        help="Number of samples to inspect")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n_scenarios", type=int, default=None,
+                        help="Limit number of scenarios (for testing)")
+    args = parser.parse_args()
+
+    print(f"\nLoading model: {args.model}")
+    model, tokenizer = load_model_and_tokenizer(args.model)
+
+    run(model, tokenizer, args)
 
 
 if __name__ == "__main__":
