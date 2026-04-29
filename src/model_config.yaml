@@ -38,3 +38,44 @@ Qwen/Qwen2.5-72B-Instruct:
   load_in_8bit: True
   num_gpus: 1
   tool_use_start_token_id: 151657
+
+# Qwen 3 (released 2025-04). All support enable_thinking toggle in
+# apply_chat_template; default is True. With continue_final_message=True
+# and an assistant prefill, the rendered template injects an empty
+# <think></think> block — effectively a force-skip-thinking regime that
+# matches the Qwen 2.5 measurement protocol.
+# Tool-call start token: <tool_call> = 151657 (same as Qwen 2.5 family).
+Qwen/Qwen3-0.6B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-1.7B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-4B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-8B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-14B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-32B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
+
+Qwen/Qwen3-30B-A3B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 151657
