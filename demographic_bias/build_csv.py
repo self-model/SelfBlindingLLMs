@@ -123,7 +123,7 @@ def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
     # Note: tool_use_logprobs is tool_result, not tool_prob
     pattern_map = {
         "yn_logits": ["yn_logits", "yn_logprobs", "bias_yn"],
-        "tool_prob": ["tool_prob", "tool_probs", "tool_use_probs", "tool_calls"],
+        "tool_prob": ["tool_prob", "tool_probs", "tool_use_probs", "tool_calls", "bias_tool_use"],
         "tool_result": ["tool_result", "tool_results", "tool_result_yn", "tool_use_logprobs", "response_logprobs"],
     }
 
@@ -912,8 +912,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        choices=["GPT-4.1", "Qwen2.5-7B-Instruct"],
-        help="Model to process (for merged mode with OSF or local folder)",
+        help="Model to process (for merged mode with OSF or local folder). "
+             "OSF mode requires GPT-4.1 or Qwen2.5-7B-Instruct; --data-path mode accepts any name.",
     )
     parser.add_argument(
         "--data-path",

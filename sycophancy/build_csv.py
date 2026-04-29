@@ -97,26 +97,51 @@ def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
     folder = Path(data_path)
     paths = {}
 
+    # Inference scripts write `tool_use` for tool_use_probs and `tool_result` for
+    # the tool-result task. Map FILE_TYPES → token used in the inference filename.
+    inference_token = {
+        "first_person": "first_person",
+        "third_person": "third_person",
+        "tool_result": "tool_result",
+        "tool_use_probs": "tool_use",
+    }
+
     for file_type in FILE_TYPES:
-        # Try different naming patterns
+        # First try literal paths (backward compat with OSF-style or hand-organized layouts)
         candidates = [
-            # New clean format: first_person_aggregated.jsonl
             folder / f"{file_type}_aggregated.jsonl",
             folder / f"{file_type}.jsonl",
-            # Legacy format with model name: sycophancy_first_person_gpt-4.1_aggregated.jsonl
             folder / f"sycophancy_{file_type}_{model}_aggregated.jsonl",
             folder / f"sycophancy_{file_type}_{model}.jsonl",
         ]
 
-        for candidate in candidates:
-            if candidate.exists():
-                paths[file_type] = str(candidate)
-                break
-        else:
+        chosen = next((c for c in candidates if c.exists()), None)
+
+        # Fall back to globs for timestamped inference output (e.g.
+        # 20260429_123456_sycophancy_first_person_Qwen3-8B.jsonl)
+        if chosen is None:
+            token = inference_token[file_type]
+            globs = [
+                f"*sycophancy_{token}_{model}_aggregated.jsonl",
+                f"*sycophancy_{token}_{model}*.jsonl",
+                f"*sycophancy_{token}*.jsonl",
+            ]
+            for pat in globs:
+                matches = sorted(folder.glob(pat))
+                if matches:
+                    # Prefer aggregated if multiple
+                    aggregated = [m for m in matches if "aggregated" in m.name]
+                    chosen = aggregated[-1] if aggregated else matches[-1]
+                    break
+
+        if chosen is None:
             raise FileNotFoundError(
                 f"Could not find {file_type} file in {folder}. "
-                f"Tried: {[c.name for c in candidates]}"
+                f"Tried literal: {[c.name for c in candidates]} and globs for "
+                f"sycophancy_{inference_token[file_type]}_*"
             )
+
+        paths[file_type] = str(chosen)
 
     return paths
 
@@ -467,8 +492,8 @@ def main():
         "--model",
         type=str,
         required=True,
-        choices=["GPT-4.1", "Qwen2.5-7B-Instruct"],
-        help="Model to process (GPT-4.1 or Qwen2.5-7B-Instruct)",
+        help="Model to process. OSF mode requires GPT-4.1 or Qwen2.5-7B-Instruct; "
+             "--data-path mode accepts any name (used for the output filename).",
     )
     parser.add_argument(
         "--data-path",
