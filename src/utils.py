@@ -9,14 +9,18 @@ def load_model_configs(config_path: str | Path | None = None) -> dict:
 
     Args:
         config_path: Optional path to YAML config file. If None, tries
-                    'model_config.yaml' in current directory, then falls
-                    back to built-in defaults.
+                    'model_config.yaml' in the current directory, then
+                    next to this file (src/model_config.yaml).
 
     Returns:
         Dict mapping model names to their configurations with torch dtypes.
     """
-    # Try to load from YAML file
-    yaml_path = Path(config_path) if config_path else Path("model_config.yaml")
+    if config_path is not None:
+        yaml_path = Path(config_path)
+    else:
+        cwd_path = Path("model_config.yaml")
+        bundled_path = Path(__file__).resolve().parent / "model_config.yaml"
+        yaml_path = cwd_path if cwd_path.exists() else bundled_path
 
     if yaml_path.exists():
         with open(yaml_path, "r") as f:
