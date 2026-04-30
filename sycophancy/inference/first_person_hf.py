@@ -36,6 +36,7 @@ if str(REPO_ROOT) not in sys.path:
 from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
 from src.inference import load_model_and_tokenizer, get_you_them_token_ids
 from src.scoring import score_you_them_from_logits
+from src.thinking import ThinkingConfig, render_with_thinking
 from sycophancy.prompts.first_person import (
     load_scenarios,
     generate_full_experiment,
@@ -65,19 +66,13 @@ def condition_to_dict(condition: ForcedChoiceCondition) -> dict:
 # Inference Functions
 # =============================================================================
 
-def score_condition(example: dict, tokenizer, model, you_token_ids, them_token_ids) -> dict:
+def score_condition(example: dict, tokenizer, model, you_token_ids, them_token_ids,
+                    *, model_name: str, thinking_config: ThinkingConfig) -> dict:
     """
     Score a single forced-choice condition.
 
-    Args:
-        example: Dict with 'prompt' field containing the full prompt
-        tokenizer: HuggingFace tokenizer
-        model: HuggingFace model
-        you_token_ids: Dict mapping variants to token IDs
-        them_token_ids: Dict mapping variants to token IDs
-
     Returns:
-        dict with you/them logits and probabilities
+        dict with you/them logits and probabilities, plus thinking trace metadata.
     """
     # Build conversation with prefill
     conversation = [
@@ -85,12 +80,12 @@ def score_condition(example: dict, tokenizer, model, you_token_ids, them_token_i
         {'role': 'assistant', 'content': PREFILL}
     ]
 
-    # Apply chat template
-    prompt_str = tokenizer.apply_chat_template(
-        conversation,
+    # Render prompt (with thinking-mode controls)
+    prompt_str, thinking_meta = render_with_thinking(
+        model_name, model, tokenizer, conversation,
         add_generation_prompt=False,
         continue_final_message=True,
-        tokenize=False
+        thinking_config=thinking_config,
     )
 
     # Tokenize and run model
@@ -100,8 +95,11 @@ def score_condition(example: dict, tokenizer, model, you_token_ids, them_token_i
         outputs = model(**inputs)
         logits = outputs.logits[0, -1, :]  # Last token logits
 
-    # Score You/Them
-    return score_you_them_from_logits(logits, you_token_ids, them_token_ids)
+    # Score You/Them; attach thinking trace metadata
+    result = score_you_them_from_logits(logits, you_token_ids, them_token_ids)
+    result['thinking_trace'] = thinking_meta['thinking_trace']
+    result['thinking_truncated'] = thinking_meta['truncated']
+    return result
 
 
 # =============================================================================
@@ -109,7 +107,8 @@ def score_condition(example: dict, tokenizer, model, you_token_ids, them_token_i
 # =============================================================================
 
 def run_inspect_mode(data: Dataset, tokenizer, model, you_token_ids, them_token_ids,
-                     n_samples: int, seed: int):
+                     n_samples: int, seed: int,
+                     *, model_name: str, thinking_config: ThinkingConfig):
     """Run inspection mode on a few samples."""
     random.seed(seed)
 
@@ -143,11 +142,11 @@ def run_inspect_mode(data: Dataset, tokenizer, model, you_token_ids, them_token_
             {'role': 'user', 'content': example['prompt']},
             {'role': 'assistant', 'content': PREFILL}
         ]
-        prompt_str = tokenizer.apply_chat_template(
-            conversation,
+        prompt_str, _ = render_with_thinking(
+            model_name, model, tokenizer, conversation,
             add_generation_prompt=False,
             continue_final_message=True,
-            tokenize=False
+            thinking_config=thinking_config,
         )
 
         print("\n" + "-" * 70)
@@ -156,7 +155,10 @@ def run_inspect_mode(data: Dataset, tokenizer, model, you_token_ids, them_token_
         print(prompt_str[:1500] + "..." if len(prompt_str) > 1500 else prompt_str)
 
         # Score and print results
-        result = score_condition(example, tokenizer, model, you_token_ids, them_token_ids)
+        result = score_condition(
+            example, tokenizer, model, you_token_ids, them_token_ids,
+            model_name=model_name, thinking_config=thinking_config,
+        )
 
         print("\n" + "-" * 70)
         print("RESULTS:")
@@ -176,17 +178,22 @@ def run_inspect_mode(data: Dataset, tokenizer, model, you_token_ids, them_token_
 # =============================================================================
 
 def run_full_inference(data: Dataset, tokenizer, model, you_token_ids, them_token_ids,
-                       output_path: Path, model_name: str):
+                       output_path: Path, model_name: str,
+                       thinking_config: ThinkingConfig):
     """Run inference on all conditions."""
     print("=" * 60)
     print(f"RUNNING FULL INFERENCE")
     print(f"Model:       {model_name}")
     print(f"Conditions:  {len(data)}")
+    print(f"Thinking:    {thinking_config.mode} (budget={thinking_config.budget}, T={thinking_config.temperature}, N={thinking_config.n_samples})")
     print(f"Output:      {output_path}")
     print("=" * 60)
 
     def score_fn(example):
-        return score_condition(example, tokenizer, model, you_token_ids, them_token_ids)
+        return score_condition(
+            example, tokenizer, model, you_token_ids, them_token_ids,
+            model_name=model_name, thinking_config=thinking_config,
+        )
 
     # Create unique fingerprint for this run
     model_nickname = model_name.replace('/', '_')
@@ -195,7 +202,7 @@ def run_full_inference(data: Dataset, tokenizer, model, you_token_ids, them_toke
         score_fn,
         batched=False,
         load_from_cache_file=False,
-        new_fingerprint=f"{model_nickname}_sycophancy_first_person",
+        new_fingerprint=f"{model_nickname}_sycophancy_first_person_think{thinking_config.mode}",
         desc="Scoring You/Them for first-person conditions"
     )
 
@@ -247,11 +254,20 @@ def run(model, tokenizer, args):
     print(f"You tokens: {you_token_ids}")
     print(f"Them tokens: {them_token_ids}")
 
+    # Build thinking config from args (defaults yield mode='off')
+    thinking_config = ThinkingConfig(
+        mode=getattr(args, 'thinking', 'off'),
+        budget=getattr(args, 'thinking_budget', -1),
+        temperature=getattr(args, 'thinking_temperature', 0.0),
+        n_samples=getattr(args, 'thinking_n_samples', 1),
+    )
+
     # Run appropriate mode
     if args.inspect:
         run_inspect_mode(
             data, tokenizer, model, you_token_ids, them_token_ids,
-            args.inspect_n, args.seed
+            args.inspect_n, args.seed,
+            model_name=args.model, thinking_config=thinking_config,
         )
         print("Exiting after inspect mode. Run without --inspect for full inference.")
     else:
@@ -263,7 +279,7 @@ def run(model, tokenizer, args):
 
         run_full_inference(
             data, tokenizer, model, you_token_ids, them_token_ids,
-            output_path, args.model
+            output_path, args.model, thinking_config,
         )
 
 
@@ -298,6 +314,22 @@ def main():
     parser.add_argument(
         "--device", type=str, default=None,
         help="Device to use (default: auto-detect)"
+    )
+    parser.add_argument(
+        "--thinking", choices=['off', 'on'], default='off',
+        help="Thinking mode (only meaningful for models with thinking_family set; default off)"
+    )
+    parser.add_argument(
+        "--thinking-budget", dest='thinking_budget', type=int, default=-1,
+        help="Max thinking tokens; -1 = unlimited (capped at safety_max)"
+    )
+    parser.add_argument(
+        "--thinking-temperature", dest='thinking_temperature', type=float, default=0.0,
+        help="Generation temperature for the thinking trace; 0 = greedy"
+    )
+    parser.add_argument(
+        "--thinking-n-samples", dest='thinking_n_samples', type=int, default=1,
+        help="Number of trace samples per condition (only meaningful with --thinking-temperature > 0)"
     )
     args = parser.parse_args()
 

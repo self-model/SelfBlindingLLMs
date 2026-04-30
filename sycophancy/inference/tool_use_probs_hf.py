@@ -35,6 +35,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from sycophancy.config import DEFAULT_SYCOPHANCY_DATA, DEFAULT_TOOL_PROMPTS_PATH
 from src.inference import load_model_and_tokenizer, get_tool_use_start_token_id
+from src.thinking import ThinkingConfig, render_with_thinking
 from sycophancy.prompts.first_person import (
     load_scenarios,
     generate_full_experiment,
@@ -98,6 +99,7 @@ def score_tool_use_condition(
     model,
     tool_prompts: list,
     tool_use_start_token_id: int,
+    *, model_name: str, thinking_config: ThinkingConfig,
 ) -> dict:
     """
     Score tool use probability for a sycophancy condition.
@@ -105,15 +107,8 @@ def score_tool_use_condition(
     For each tool prompt, measures P(tool_use_start_token) when the model
     is presented with the sycophancy scenario and has access to the tool.
 
-    Args:
-        example: Dict with 'prompt' field
-        tokenizer: HuggingFace tokenizer
-        model: HuggingFace model
-        tool_prompts: List of tool prompt dicts
-        tool_use_start_token_id: Token ID for tool use start
-
     Returns:
-        Dict with tool_prob__{tool_name} for each tool
+        Dict with tool_prob__{tool_name} and thinking trace fields per tool.
     """
     results = {}
 
@@ -125,23 +120,21 @@ def score_tool_use_condition(
             {'role': 'user', 'content': example['prompt']}
         ]
 
-        # Apply chat template with tools.
-        # enable_thinking=False prevents Qwen3 from rendering inside a <think> block
-        # (which would put a thinking-mode token, not <tool_call>, at the next position).
-        # Silently ignored by templates that don't reference it (Qwen 2.5, GPT, etc.).
-        # TODO(thinking-plan): replace with render_with_thinking() when adapter lands.
+        # Render prompt (handles enable_thinking=False on the off path; full
+        # thinking generate-then-measure on the on path).
         try:
-            prompt_str = tokenizer.apply_chat_template(
-                conversation,
-                add_generation_prompt=True,
+            prompt_str, thinking_meta = render_with_thinking(
+                model_name, model, tokenizer, conversation,
                 tools=tool_block,
-                enable_thinking=False,
-                tokenize=False
+                add_generation_prompt=True,
+                thinking_config=thinking_config,
             )
         except Exception as e:
             # Model may not support tools in chat template
-            print(f"Warning: Could not apply chat template with tools: {e}")
+            print(f"Warning: Could not render prompt: {e}")
             results[f"tool_prob__{tool_prompt['name']}"] = None
+            results[f"thinking_trace__{tool_prompt['name']}"] = None
+            results[f"thinking_truncated__{tool_prompt['name']}"] = False
             continue
 
         # Tokenize and get logits
@@ -156,6 +149,8 @@ def score_tool_use_condition(
         tool_prob = probs[tool_use_start_token_id].item()
 
         results[f"tool_prob__{tool_prompt['name']}"] = tool_prob
+        results[f"thinking_trace__{tool_prompt['name']}"] = thinking_meta['thinking_trace']
+        results[f"thinking_truncated__{tool_prompt['name']}"] = thinking_meta['truncated']
 
     return results
 
@@ -172,6 +167,7 @@ def run_inspect_mode(
     tool_use_start_token_id: int,
     n_samples: int,
     seed: int,
+    *, model_name: str, thinking_config: ThinkingConfig,
 ):
     """Run inspection mode on a few samples."""
     random.seed(seed)
@@ -205,14 +201,12 @@ def run_inspect_mode(
         tool_block = create_tool_definition(tool_prompts[0])
         conversation = [{'role': 'user', 'content': example['prompt']}]
 
-        # See note in score_tool_use_condition() above re: enable_thinking=False.
         try:
-            prompt_str = tokenizer.apply_chat_template(
-                conversation,
-                add_generation_prompt=True,
+            prompt_str, _ = render_with_thinking(
+                model_name, model, tokenizer, conversation,
                 tools=tool_block,
-                enable_thinking=False,
-                tokenize=False
+                add_generation_prompt=True,
+                thinking_config=thinking_config,
             )
 
             print("\n" + "-" * 70)
@@ -225,7 +219,8 @@ def run_inspect_mode(
 
         # Score and print results
         results = score_tool_use_condition(
-            example, tokenizer, model, tool_prompts, tool_use_start_token_id
+            example, tokenizer, model, tool_prompts, tool_use_start_token_id,
+            model_name=model_name, thinking_config=thinking_config,
         )
 
         print("\n" + "-" * 70)
@@ -255,6 +250,7 @@ def run_full_inference(
     tool_use_start_token_id: int,
     output_path: Path,
     model_name: str,
+    thinking_config: ThinkingConfig,
 ):
     """Run inference on all conditions."""
     print("=" * 60)
@@ -262,12 +258,14 @@ def run_full_inference(
     print(f"Model:       {model_name}")
     print(f"Conditions:  {len(data)}")
     print(f"Tools:       {[tp['name'] for tp in tool_prompts]}")
+    print(f"Thinking:    {thinking_config.mode} (budget={thinking_config.budget}, T={thinking_config.temperature}, N={thinking_config.n_samples})")
     print(f"Output:      {output_path}")
     print("=" * 60)
 
     def score_fn(example):
         return score_tool_use_condition(
-            example, tokenizer, model, tool_prompts, tool_use_start_token_id
+            example, tokenizer, model, tool_prompts, tool_use_start_token_id,
+            model_name=model_name, thinking_config=thinking_config,
         )
 
     # Create unique fingerprint for this run
@@ -277,7 +275,7 @@ def run_full_inference(
         score_fn,
         batched=False,
         load_from_cache_file=False,
-        new_fingerprint=f"{model_nickname}_sycophancy_tool_use",
+        new_fingerprint=f"{model_nickname}_sycophancy_tool_use_think{thinking_config.mode}",
         desc="Scoring tool use probability"
     )
 
@@ -349,11 +347,20 @@ def run(model, tokenizer, args):
     print(f"Tool use start token ID: {tool_use_start_token_id}")
     print(f"Tool use start token: {repr(tokenizer.decode([tool_use_start_token_id]))}")
 
+    # Build thinking config from args (defaults yield mode='off')
+    thinking_config = ThinkingConfig(
+        mode=getattr(args, 'thinking', 'off'),
+        budget=getattr(args, 'thinking_budget', -1),
+        temperature=getattr(args, 'thinking_temperature', 0.0),
+        n_samples=getattr(args, 'thinking_n_samples', 1),
+    )
+
     # Run appropriate mode
     if args.inspect:
         run_inspect_mode(
             data, tokenizer, model, tool_prompts, tool_use_start_token_id,
-            args.inspect_n, args.seed
+            args.inspect_n, args.seed,
+            model_name=args.model, thinking_config=thinking_config,
         )
         print("Exiting after inspect mode. Run without --inspect for full inference.")
     else:
@@ -365,7 +372,7 @@ def run(model, tokenizer, args):
 
         run_full_inference(
             data, tokenizer, model, tool_prompts, tool_use_start_token_id,
-            output_path, args.model
+            output_path, args.model, thinking_config,
         )
 
 
@@ -400,6 +407,22 @@ def main():
     parser.add_argument(
         "--seed", type=int, default=42,
         help="Random seed"
+    )
+    parser.add_argument(
+        "--thinking", choices=['off', 'on'], default='off',
+        help="Thinking mode (only meaningful for models with thinking_family set; default off)"
+    )
+    parser.add_argument(
+        "--thinking-budget", dest='thinking_budget', type=int, default=-1,
+        help="Max thinking tokens; -1 = unlimited (capped at safety_max)"
+    )
+    parser.add_argument(
+        "--thinking-temperature", dest='thinking_temperature', type=float, default=0.0,
+        help="Generation temperature for the thinking trace; 0 = greedy"
+    )
+    parser.add_argument(
+        "--thinking-n-samples", dest='thinking_n_samples', type=int, default=1,
+        help="Number of trace samples per condition (only meaningful with --thinking-temperature > 0)"
     )
     args = parser.parse_args()
 

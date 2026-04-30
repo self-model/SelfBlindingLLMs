@@ -32,6 +32,7 @@ from demographic_bias.config import DEFAULT_BIAS_DATA
 from demographic_bias.prompts.formats import PROMPT_DICT, build_single_prompt
 from src.inference import load_model_and_tokenizer, get_yes_no_token_ids
 from src.scoring import score_yes_no_from_logits
+from src.thinking import ThinkingConfig, render_with_thinking
 
 
 # =============================================================================
@@ -67,7 +68,8 @@ def load_scenarios(path: Path) -> list[dict]:
 # =============================================================================
 
 def score_example(example: dict, prompt_format: dict, tokenizer, model,
-                  yes_token_ids: dict, no_token_ids: dict) -> dict:
+                  yes_token_ids: dict, no_token_ids: dict,
+                  *, model_name: str, thinking_config: ThinkingConfig) -> dict:
     """
     Score a single example with a given prompt format.
 
@@ -78,9 +80,11 @@ def score_example(example: dict, prompt_format: dict, tokenizer, model,
         model: HuggingFace model
         yes_token_ids: Dict mapping variants to token IDs
         no_token_ids: Dict mapping variants to token IDs
+        model_name: HF model name (for thinking_family lookup)
+        thinking_config: Thinking-mode configuration
 
     Returns:
-        dict with yes/no logits and probabilities
+        dict with yes/no logits and probabilities (plus thinking trace fields)
     """
     snake_case = prompt_format['snake_case']
 
@@ -98,12 +102,12 @@ def score_example(example: dict, prompt_format: dict, tokenizer, model,
             'content': PREFILLS.get(snake_case, PREFILLS['default'])
         })
 
-    # Apply chat template
-    prompt_str = tokenizer.apply_chat_template(
-        conversation,
+    # Render prompt (with thinking-mode controls)
+    prompt_str, thinking_meta = render_with_thinking(
+        model_name, model, tokenizer, conversation,
         add_generation_prompt=False,
         continue_final_message=True,
-        tokenize=False
+        thinking_config=thinking_config,
     )
 
     # Tokenize and run model
@@ -121,6 +125,9 @@ def score_example(example: dict, prompt_format: dict, tokenizer, model,
         f"{snake_case}_prompt_no_logits": result['no_logit'],
         f"{snake_case}_prompt_yes_relative_probs": result['yes_prob'],
         f"{snake_case}_prompt_no_relative_probs": result['no_prob'],
+        f"{snake_case}_prompt_thinking_trace": thinking_meta['thinking_trace'],
+        f"{snake_case}_prompt_thinking_trace_token_count": thinking_meta['trace_token_count'],
+        f"{snake_case}_prompt_thinking_truncated": thinking_meta['truncated'],
     }
 
 
@@ -129,7 +136,8 @@ def score_example(example: dict, prompt_format: dict, tokenizer, model,
 # =============================================================================
 
 def run_inspect_mode(data: Dataset, tokenizer, model, yes_token_ids, no_token_ids,
-                     n_samples: int, seed: int):
+                     n_samples: int, seed: int,
+                     *, model_name: str, thinking_config: ThinkingConfig):
     """Run inspection mode on a few samples."""
     random.seed(seed)
 
@@ -175,18 +183,21 @@ def run_inspect_mode(data: Dataset, tokenizer, model, yes_token_ids, no_token_id
                 'content': PREFILLS.get(snake_case, PREFILLS['default'])
             })
 
-        prompt_str = tokenizer.apply_chat_template(
-            conversation,
+        prompt_str, _ = render_with_thinking(
+            model_name, model, tokenizer, conversation,
             add_generation_prompt=False,
             continue_final_message=True,
-            tokenize=False
+            thinking_config=thinking_config,
         )
 
         print("\nPROMPT (truncated):")
         print(prompt_str[:1500] + "..." if len(prompt_str) > 1500 else prompt_str)
 
         # Score and show results
-        result = score_example(example, prompt_format, tokenizer, model, yes_token_ids, no_token_ids)
+        result = score_example(
+            example, prompt_format, tokenizer, model, yes_token_ids, no_token_ids,
+            model_name=model_name, thinking_config=thinking_config,
+        )
 
         print(f"\nRESULTS:")
         print(f"  P(Yes) = {result[f'{snake_case}_prompt_yes_relative_probs']:.4f}")
@@ -202,12 +213,14 @@ def run_inspect_mode(data: Dataset, tokenizer, model, yes_token_ids, no_token_id
 # =============================================================================
 
 def run_full_inference(data: Dataset, tokenizer, model, yes_token_ids, no_token_ids,
-                       output_path: Path, model_name: str):
+                       output_path: Path, model_name: str,
+                       thinking_config: ThinkingConfig):
     """Run inference on all conditions."""
     print("=" * 60)
     print(f"RUNNING FULL INFERENCE")
     print(f"Model:       {model_name}")
     print(f"Scenarios:   {len(data)}")
+    print(f"Thinking:    {thinking_config.mode} (budget={thinking_config.budget}, T={thinking_config.temperature}, N={thinking_config.n_samples})")
     print(f"Output:      {output_path}")
     print("=" * 60)
 
@@ -219,13 +232,16 @@ def run_full_inference(data: Dataset, tokenizer, model, yes_token_ids, no_token_
         print(f"\nScoring: {prompt_name}")
 
         def score_fn(example):
-            return score_example(example, prompt_format, tokenizer, model, yes_token_ids, no_token_ids)
+            return score_example(
+                example, prompt_format, tokenizer, model, yes_token_ids, no_token_ids,
+                model_name=model_name, thinking_config=thinking_config,
+            )
 
         run_data = run_data.map(
             score_fn,
             batched=False,
             load_from_cache_file=False,
-            new_fingerprint=f"{model_nickname}_{snake_case}",
+            new_fingerprint=f"{model_nickname}_{snake_case}_think{thinking_config.mode}",
             desc=f"Scoring '{prompt_name}'"
         )
 
@@ -282,10 +298,19 @@ def run(model, tokenizer, args):
     print(f"Yes tokens: {yes_token_ids}")
     print(f"No tokens: {no_token_ids}")
 
+    # Build thinking config from args (defaults yield mode='off' → current behavior)
+    thinking_config = ThinkingConfig(
+        mode=getattr(args, 'thinking', 'off'),
+        budget=getattr(args, 'thinking_budget', -1),
+        temperature=getattr(args, 'thinking_temperature', 0.0),
+        n_samples=getattr(args, 'thinking_n_samples', 1),
+    )
+
     # Run appropriate mode
     if args.inspect:
         run_inspect_mode(data, tokenizer, model, yes_token_ids, no_token_ids,
-                         args.inspect_n, args.seed)
+                         args.inspect_n, args.seed,
+                         model_name=args.model, thinking_config=thinking_config)
         print("Exiting after inspect mode. Run without --inspect for full inference.")
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -294,7 +319,7 @@ def run(model, tokenizer, args):
         output_path = output_dir / f"{timestamp}_bias_yn_{model_nickname}.jsonl"
 
         run_full_inference(data, tokenizer, model, yes_token_ids, no_token_ids,
-                           output_path, args.model)
+                           output_path, args.model, thinking_config)
 
 
 def main():
@@ -312,6 +337,14 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_scenarios", type=int, default=None,
                         help="Limit number of scenarios (for testing)")
+    parser.add_argument("--thinking", choices=['off', 'on'], default='off',
+                        help="Thinking mode (only meaningful for models with thinking_family set; default off)")
+    parser.add_argument("--thinking-budget", dest='thinking_budget', type=int, default=-1,
+                        help="Max thinking tokens; -1 = unlimited (capped at safety_max)")
+    parser.add_argument("--thinking-temperature", dest='thinking_temperature', type=float, default=0.0,
+                        help="Generation temperature for the thinking trace; 0 = greedy")
+    parser.add_argument("--thinking-n-samples", dest='thinking_n_samples', type=int, default=1,
+                        help="Number of trace samples per condition (only meaningful with --thinking-temperature > 0)")
     args = parser.parse_args()
 
     print(f"\nLoading model: {args.model}")

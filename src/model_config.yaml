@@ -49,33 +49,40 @@ Qwen/Qwen3-0.6B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-1.7B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-4B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-8B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-14B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-32B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3
 
 Qwen/Qwen3-30B-A3B:
   dtype: bfloat16
   num_gpus: 1
   tool_use_start_token_id: 151657
+  thinking_family: qwen3

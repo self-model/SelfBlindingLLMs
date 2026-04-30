@@ -33,6 +33,7 @@ from datasets import Dataset
 from demographic_bias.config import DEFAULT_BIAS_DATA, DEFAULT_TOOL_PROMPTS_PATH
 from demographic_bias.prompts.formats import PROMPT_DICT, build_single_prompt, create_tool_definition
 from src.inference import load_model_and_tokenizer, get_tool_use_start_token_id
+from src.thinking import ThinkingConfig, render_with_thinking
 
 
 # =============================================================================
@@ -60,20 +61,14 @@ def load_tool_prompts(path: Path) -> list[dict]:
 # =============================================================================
 
 def get_tool_use_prob(example: dict, prompt_format: dict, tool_prompt: dict,
-                      tokenizer, model, tool_start_token_id: int) -> float:
+                      tokenizer, model, tool_start_token_id: int,
+                      *, model_name: str, thinking_config: ThinkingConfig) -> tuple[float, dict]:
     """
     Get probability of tool-use start token for a given example and prompt format.
 
-    Args:
-        example: Scenario dict
-        prompt_format: Prompt format dict from PROMPT_DICT
-        tool_prompt: Tool prompt dict
-        tokenizer: HuggingFace tokenizer
-        model: HuggingFace model
-        tool_start_token_id: Token ID for tool-use start token
-
     Returns:
-        Probability of tool-use start token
+        (tool_prob, thinking_meta) — the probability of the tool-use start token,
+        and the thinking metadata (trace, truncated, etc.) from render_with_thinking.
     """
     # Build conversation
     row_values = [example[col] for col in prompt_format['prompt_column']]
@@ -86,17 +81,13 @@ def get_tool_use_prob(example: dict, prompt_format: dict, tool_prompt: dict,
     # Create tool definition
     tools = create_tool_definition(tool_prompt)
 
-    # Apply chat template with tools.
-    # enable_thinking=False prevents Qwen3 from rendering inside a <think> block
-    # (which would put a thinking-mode token, not <tool_call>, at the next position).
-    # Silently ignored by templates that don't reference it (Qwen 2.5, GPT, etc.).
-    # TODO(thinking-plan): replace with render_with_thinking() when adapter lands.
-    prompt_str = tokenizer.apply_chat_template(
-        conversation,
+    # Render prompt (handles enable_thinking=False on the off path; full thinking
+    # generate-then-measure on the on path).
+    prompt_str, thinking_meta = render_with_thinking(
+        model_name, model, tokenizer, conversation,
         tools=tools,
         add_generation_prompt=True,
-        enable_thinking=False,
-        tokenize=False
+        thinking_config=thinking_config,
     )
 
     # Tokenize and run model
@@ -110,16 +101,17 @@ def get_tool_use_prob(example: dict, prompt_format: dict, tool_prompt: dict,
     probs = torch.softmax(logits, dim=-1)
     tool_prob = probs[tool_start_token_id].item()
 
-    return tool_prob
+    return tool_prob, thinking_meta
 
 
 def score_example(example: dict, prompt_formats: dict, tool_prompts: list,
-                  tokenizer, model, tool_start_token_id: int) -> dict:
+                  tokenizer, model, tool_start_token_id: int,
+                  *, model_name: str, thinking_config: ThinkingConfig) -> dict:
     """
     Score a single example across all prompt formats and tool prompts.
 
     Returns:
-        Dict with tool-use probabilities for each (prompt_format, tool) combination
+        Dict with tool-use probabilities and thinking traces per (prompt_format, tool)
     """
     results = {}
 
@@ -129,16 +121,23 @@ def score_example(example: dict, prompt_formats: dict, tool_prompts: list,
         for tool_prompt in tool_prompts:
             tool_name = tool_prompt['name']
             col_name = f"{snake_case}__{tool_name}__tool_prob"
+            trace_col = f"{snake_case}__{tool_name}__thinking_trace"
+            truncated_col = f"{snake_case}__{tool_name}__thinking_truncated"
 
             try:
-                prob = get_tool_use_prob(
+                prob, thinking_meta = get_tool_use_prob(
                     example, prompt_format, tool_prompt,
-                    tokenizer, model, tool_start_token_id
+                    tokenizer, model, tool_start_token_id,
+                    model_name=model_name, thinking_config=thinking_config,
                 )
                 results[col_name] = prob
+                results[trace_col] = thinking_meta['thinking_trace']
+                results[truncated_col] = thinking_meta['truncated']
             except Exception as e:
                 print(f"Error scoring {snake_case}/{tool_name}: {e}")
                 results[col_name] = None
+                results[trace_col] = None
+                results[truncated_col] = False
 
     return results
 
@@ -148,7 +147,8 @@ def score_example(example: dict, prompt_formats: dict, tool_prompts: list,
 # =============================================================================
 
 def run_inspect_mode(data: Dataset, tool_prompts: list, tokenizer, model,
-                     tool_start_token_id: int, n_samples: int, seed: int):
+                     tool_start_token_id: int, n_samples: int, seed: int,
+                     *, model_name: str, thinking_config: ThinkingConfig):
     """Run inspection mode on a few samples."""
     random.seed(seed)
 
@@ -180,20 +180,23 @@ def run_inspect_mode(data: Dataset, tool_prompts: list, tokenizer, model,
 
     tools = create_tool_definition(tool_prompt)
 
-    # See note in get_tool_use_prob() above re: enable_thinking=False.
-    prompt_str = tokenizer.apply_chat_template(
-        conversation,
+    # Render through render_with_thinking so inspect mode reflects what the
+    # full inference path will see (thinking-on or off, depending on config).
+    prompt_str, _ = render_with_thinking(
+        model_name, model, tokenizer, conversation,
         tools=tools,
         add_generation_prompt=True,
-        enable_thinking=False,
-        tokenize=False
+        thinking_config=thinking_config,
     )
 
     print(f"\n--- PROMPT (truncated) ---")
     print(prompt_str[:1500] + "..." if len(prompt_str) > 1500 else prompt_str)
 
     # Get tool probability
-    prob = get_tool_use_prob(example, prompt_format, tool_prompt, tokenizer, model, tool_start_token_id)
+    prob, _ = get_tool_use_prob(
+        example, prompt_format, tool_prompt, tokenizer, model, tool_start_token_id,
+        model_name=model_name, thinking_config=thinking_config,
+    )
 
     print(f"\n--- RESULTS ---")
     print(f"  Tool start token ID: {tool_start_token_id}")
@@ -225,7 +228,8 @@ def run_inspect_mode(data: Dataset, tool_prompts: list, tokenizer, model,
 # =============================================================================
 
 def run_full_inference(data: Dataset, tool_prompts: list, tokenizer, model,
-                       tool_start_token_id: int, output_path: Path, model_name: str):
+                       tool_start_token_id: int, output_path: Path, model_name: str,
+                       thinking_config: ThinkingConfig):
     """Run inference on all conditions."""
     # Determine which prompt formats to use
     prompt_formats_to_use = {}
@@ -242,6 +246,7 @@ def run_full_inference(data: Dataset, tool_prompts: list, tokenizer, model,
     print(f"Scenarios:      {len(data)}")
     print(f"Prompt formats: {len(prompt_formats_to_use)}")
     print(f"Tool prompts:   {len(tool_prompts)}")
+    print(f"Thinking:       {thinking_config.mode} (budget={thinking_config.budget}, T={thinking_config.temperature}, N={thinking_config.n_samples})")
     print(f"Output:         {output_path}")
     print("=" * 60)
 
@@ -249,13 +254,14 @@ def run_full_inference(data: Dataset, tool_prompts: list, tokenizer, model,
 
     def score_fn(example):
         return score_example(example, prompt_formats_to_use, tool_prompts,
-                            tokenizer, model, tool_start_token_id)
+                            tokenizer, model, tool_start_token_id,
+                            model_name=model_name, thinking_config=thinking_config)
 
     run_data = data.map(
         score_fn,
         batched=False,
         load_from_cache_file=False,
-        new_fingerprint=f"{model_nickname}_tool_use",
+        new_fingerprint=f"{model_nickname}_tool_use_think{thinking_config.mode}",
         desc="Scoring tool-use probability"
     )
 
@@ -306,10 +312,19 @@ def run(model, tokenizer, args):
     print(f"Tool-use start token ID: {tool_start_id}")
     print(f"Tool-use start token: {repr(tokenizer.decode([tool_start_id]))}")
 
+    # Build thinking config from args (defaults yield mode='off')
+    thinking_config = ThinkingConfig(
+        mode=getattr(args, 'thinking', 'off'),
+        budget=getattr(args, 'thinking_budget', -1),
+        temperature=getattr(args, 'thinking_temperature', 0.0),
+        n_samples=getattr(args, 'thinking_n_samples', 1),
+    )
+
     # Run appropriate mode
     if args.inspect:
         run_inspect_mode(data, tool_prompts, tokenizer, model, tool_start_id,
-                         args.inspect_n, args.seed)
+                         args.inspect_n, args.seed,
+                         model_name=args.model, thinking_config=thinking_config)
         print("Exiting after inspect mode. Run without --inspect for full inference.")
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -318,7 +333,7 @@ def run(model, tokenizer, args):
         output_path = output_dir / f"{timestamp}_bias_tool_use_{model_nickname}.jsonl"
 
         run_full_inference(data, tool_prompts, tokenizer, model, tool_start_id,
-                           output_path, args.model)
+                           output_path, args.model, thinking_config)
 
 
 def main():
@@ -338,6 +353,14 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_scenarios", type=int, default=None,
                         help="Limit number of scenarios (for testing)")
+    parser.add_argument("--thinking", choices=['off', 'on'], default='off',
+                        help="Thinking mode (only meaningful for models with thinking_family set; default off)")
+    parser.add_argument("--thinking-budget", dest='thinking_budget', type=int, default=-1,
+                        help="Max thinking tokens; -1 = unlimited (capped at safety_max)")
+    parser.add_argument("--thinking-temperature", dest='thinking_temperature', type=float, default=0.0,
+                        help="Generation temperature for the thinking trace; 0 = greedy")
+    parser.add_argument("--thinking-n-samples", dest='thinking_n_samples', type=int, default=1,
+                        help="Number of trace samples per condition (only meaningful with --thinking-temperature > 0)")
     args = parser.parse_args()
 
     print(f"\nLoading model: {args.model}")
