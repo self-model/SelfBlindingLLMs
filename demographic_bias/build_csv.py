@@ -535,7 +535,13 @@ def load_yn_logits(yn_logits_path: str) -> dict:
 
 def load_tool_prob_nested(tool_prob_path: str) -> dict:
     """
-    Load tool prob data from raw format (nested dicts).
+    Load tool prob data from raw format.
+
+    Handles two row shapes (per row, automatically):
+    - Flat: columns like "default__run_counterfactual_simulation__tool_prob"
+      with the prob directly. (Local inference output.)
+    - Nested: a column named "default" whose value is a dict mapping tool
+      name (or "tool_prob_with_desc___name") to prob. (OSF / legacy.)
 
     Args:
         tool_prob_path: Local path or URL to the file
@@ -551,6 +557,27 @@ def load_tool_prob_nested(tool_prob_path: str) -> dict:
             if dq_id in EXCLUDED_DECISION_QUESTION_IDS:
                 continue
 
+            # Try flat columns first (local inference output: e.g.
+            # "default__run_counterfactual_simulation__tool_prob": 0.0)
+            found_flat = False
+            for k, v in row.items():
+                m = TOOL_PROB_RE.match(k)
+                if not m:
+                    continue
+                prompt_format = m.group("prompt_format")
+                tool_name = m.group("tool_name")
+                if prompt_format not in INCLUDED_PROMPT_FORMATS:
+                    continue
+                if tool_name != INCLUDED_TOOL:
+                    continue
+                lookup_key = (dq_id, row.get("race"), row.get("gender"), prompt_format)
+                tool_prob_lookup[lookup_key] = v
+                found_flat = True
+
+            if found_flat:
+                continue
+
+            # Fall back to nested format (OSF / legacy)
             for prompt_format in INCLUDED_PROMPT_FORMATS:
                 if prompt_format not in row:
                     continue
