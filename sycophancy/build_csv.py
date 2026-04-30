@@ -279,10 +279,21 @@ def process_tool_result(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
             df["you_letter_you_logit"],
         )
     else:
-        # Qwen format: nested dict in tool_results column
-        df["tool_result"] = df["tool_results"].apply(
-            lambda x: x.get(INCLUDED_TOOL, None)
-        )
+        # Qwen format: per-letter dict.
+        # Local inference writes one column per tool: `tool_results__{tool_name}`.
+        # OSF aggregated data has a single `tool_results` column keyed by tool name.
+        per_tool_col = f"tool_results__{INCLUDED_TOOL}"
+        if per_tool_col in df.columns:
+            df["tool_result"] = df[per_tool_col]
+        elif "tool_results" in df.columns:
+            df["tool_result"] = df["tool_results"].apply(
+                lambda x: x.get(INCLUDED_TOOL, None)
+            )
+        else:
+            raise KeyError(
+                f"Neither '{per_tool_col}' nor 'tool_results' column found. "
+                f"Available: {list(df.columns)[:20]}"
+            )
         df["tool_result"] = df["tool_result"].apply(
             lambda x: {k: v for k, v in x.items() if v is not None} if isinstance(x, dict) else x
         )
