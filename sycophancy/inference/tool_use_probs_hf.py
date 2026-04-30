@@ -125,12 +125,17 @@ def score_tool_use_condition(
             {'role': 'user', 'content': example['prompt']}
         ]
 
-        # Apply chat template with tools
+        # Apply chat template with tools.
+        # enable_thinking=False prevents Qwen3 from rendering inside a <think> block
+        # (which would put a thinking-mode token, not <tool_call>, at the next position).
+        # Silently ignored by templates that don't reference it (Qwen 2.5, GPT, etc.).
+        # TODO(thinking-plan): replace with render_with_thinking() when adapter lands.
         try:
             prompt_str = tokenizer.apply_chat_template(
                 conversation,
                 add_generation_prompt=True,
                 tools=tool_block,
+                enable_thinking=False,
                 tokenize=False
             )
         except Exception as e:
@@ -200,11 +205,13 @@ def run_inspect_mode(
         tool_block = create_tool_definition(tool_prompts[0])
         conversation = [{'role': 'user', 'content': example['prompt']}]
 
+        # See note in score_tool_use_condition() above re: enable_thinking=False.
         try:
             prompt_str = tokenizer.apply_chat_template(
                 conversation,
                 add_generation_prompt=True,
                 tools=tool_block,
+                enable_thinking=False,
                 tokenize=False
             )
 

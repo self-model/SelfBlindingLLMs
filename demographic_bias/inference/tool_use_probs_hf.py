@@ -86,11 +86,16 @@ def get_tool_use_prob(example: dict, prompt_format: dict, tool_prompt: dict,
     # Create tool definition
     tools = create_tool_definition(tool_prompt)
 
-    # Apply chat template with tools
+    # Apply chat template with tools.
+    # enable_thinking=False prevents Qwen3 from rendering inside a <think> block
+    # (which would put a thinking-mode token, not <tool_call>, at the next position).
+    # Silently ignored by templates that don't reference it (Qwen 2.5, GPT, etc.).
+    # TODO(thinking-plan): replace with render_with_thinking() when adapter lands.
     prompt_str = tokenizer.apply_chat_template(
         conversation,
         tools=tools,
         add_generation_prompt=True,
+        enable_thinking=False,
         tokenize=False
     )
 
@@ -175,10 +180,12 @@ def run_inspect_mode(data: Dataset, tool_prompts: list, tokenizer, model,
 
     tools = create_tool_definition(tool_prompt)
 
+    # See note in get_tool_use_prob() above re: enable_thinking=False.
     prompt_str = tokenizer.apply_chat_template(
         conversation,
         tools=tools,
         add_generation_prompt=True,
+        enable_thinking=False,
         tokenize=False
     )
 
