@@ -83,7 +83,10 @@ def set_determinism():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    torch.use_deterministic_algorithms(True)
+    # MoE models (Qwen3-30B-A3B, Qwen3-235B-A22B) use torch.histc in expert routing,
+    # which has no deterministic CUDA implementation. Force warn_only so support modules that
+    # call use_deterministic_algorithms(True) don't crash on MoE.
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
     import os
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
