@@ -172,8 +172,22 @@ def load_data(model: str, data_path: str | None = None) -> tuple[pd.DataFrame, p
 
 
 def normalize_columns(df_third_person: pd.DataFrame) -> pd.DataFrame:
-    """Standardize label_a_* columns to first_label_* naming convention."""
+    """Standardize column names so process_third_person sees first_label_*/second_label_*.
+
+    Two input shapes are handled:
+
+    - OSF aggregated format: columns are `label_a_*`/`label_b_*`. These are
+      renamed in place (label_a_* -> first_label_*, label_b_* -> second_label_*).
+
+    - Local-inference format: columns are `version_a_*`/`version_b_*` (logits
+      and probs at the version-A and version-B letter tokens). These don't
+      directly correspond to first/second position; we synthesize first_label_*
+      and second_label_* by branching on `version_a_first`.
+    """
+    df_third_person = df_third_person.copy()
+
     if "label_a_logit" in df_third_person.columns:
+        # OSF format: rename label_a_/label_b_ -> first_label_/second_label_
         rename_map = {}
         for col in df_third_person.columns:
             if col.startswith("label_a_"):
@@ -181,8 +195,30 @@ def normalize_columns(df_third_person: pd.DataFrame) -> pd.DataFrame:
             elif col.startswith("label_b_"):
                 rename_map[col] = col.replace("label_b_", "second_label_")
         if rename_map:
-            print(f"  Renaming third_person columns: {rename_map}")
+            print(f"  Renaming third_person columns (OSF format): {rename_map}")
             df_third_person = df_third_person.rename(columns=rename_map)
+    elif (
+        "version_a_logit" in df_third_person.columns
+        and "version_a_first" in df_third_person.columns
+    ):
+        # Local-inference format: synthesize first_label_*/second_label_*
+        # from version_a_*/version_b_* using version_a_first.
+        print("  Synthesizing first_label_*/second_label_* from version_a_*/version_b_* columns")
+        for stat in ("logit", "prob"):
+            va_col = f"version_a_{stat}"
+            vb_col = f"version_b_{stat}"
+            if va_col in df_third_person.columns and vb_col in df_third_person.columns:
+                df_third_person[f"first_label_{stat}"] = np.where(
+                    df_third_person["version_a_first"],
+                    df_third_person[va_col],
+                    df_third_person[vb_col],
+                )
+                df_third_person[f"second_label_{stat}"] = np.where(
+                    df_third_person["version_a_first"],
+                    df_third_person[vb_col],
+                    df_third_person[va_col],
+                )
+
     return df_third_person
 
 
