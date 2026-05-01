@@ -215,17 +215,25 @@ def _qwen3_render_with_thinking(
     if tokenizer.eos_token_id is not None:
         eos_ids.append(tokenizer.eos_token_id)
 
+    # Build generate kwargs. Only pass temperature when sampling — passing it
+    # alongside do_sample=False triggers a transformers warning about ignored
+    # generation flags, even though the value is semantically irrelevant.
+    generate_kwargs = dict(
+        **inputs,
+        max_new_tokens=max_new,
+        eos_token_id=eos_ids,
+        pad_token_id=(tokenizer.pad_token_id
+                      if tokenizer.pad_token_id is not None
+                      else tokenizer.eos_token_id),
+    )
+    if thinking_config.temperature > 0:
+        generate_kwargs['do_sample'] = True
+        generate_kwargs['temperature'] = thinking_config.temperature
+    else:
+        generate_kwargs['do_sample'] = False
+
     with torch.inference_mode():
-        gen_out = model.generate(
-            **inputs,
-            max_new_tokens=max_new,
-            do_sample=thinking_config.temperature > 0,
-            temperature=thinking_config.temperature if thinking_config.temperature > 0 else 1.0,
-            eos_token_id=eos_ids,
-            pad_token_id=(tokenizer.pad_token_id
-                          if tokenizer.pad_token_id is not None
-                          else tokenizer.eos_token_id),
-        )
+        gen_out = model.generate(**generate_kwargs)
 
     trace_ids = gen_out[0][inputs['input_ids'].shape[1]:].tolist()
     truncated = end_think_id not in trace_ids
