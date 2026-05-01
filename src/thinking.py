@@ -225,6 +225,7 @@ def _qwen3_render_with_thinking(
         pad_token_id=(tokenizer.pad_token_id
                       if tokenizer.pad_token_id is not None
                       else tokenizer.eos_token_id),
+        use_cache=True,
     )
     if thinking_config.temperature > 0:
         generate_kwargs['do_sample'] = True
@@ -232,8 +233,20 @@ def _qwen3_render_with_thinking(
     else:
         generate_kwargs['do_sample'] = False
 
-    with torch.inference_mode():
-        gen_out = model.generate(**generate_kwargs)
+    # CRITICAL: override model.config.use_cache for the duration of this call.
+    # load_model_and_tokenizer sets it to False (correct default for the
+    # forward-pass-only measurement code throughout the rest of the codebase),
+    # which causes the model's *forward* to skip computing past_key_values
+    # entirely. Without that, the generate(use_cache=True) kwarg is
+    # functionally a no-op — each new token re-computes attention over the
+    # full growing prefix (O(n²) per trace, ~100× slowdown for 500 tokens).
+    old_use_cache = getattr(model.config, 'use_cache', None)
+    model.config.use_cache = True
+    try:
+        with torch.inference_mode():
+            gen_out = model.generate(**generate_kwargs)
+    finally:
+        model.config.use_cache = old_use_cache
 
     trace_ids = gen_out[0][inputs['input_ids'].shape[1]:].tolist()
     truncated = end_think_id not in trace_ids
