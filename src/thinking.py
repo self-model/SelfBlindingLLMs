@@ -240,7 +240,11 @@ def _qwen3_render_with_thinking(
     trace_text = tokenizer.decode(trace_ids, skip_special_tokens=False)
     if truncated:
         # Hit the budget cap without </think>; force-close so the post-trace
-        # prompt is well-formed.
+        # prompt is well-formed. The model's natural format is
+        # `[reasoning]\n</think>\n\n[answer]` (verified empirically) — match
+        # that by ensuring a newline before the appended </think>.
+        if not trace_text.endswith('\n'):
+            trace_text += '\n'
         trace_text = trace_text + tokenizer.decode([end_think_id], skip_special_tokens=False)
 
     final_prompt = pre_think + trace_text + '\n\n' + prefill_text
