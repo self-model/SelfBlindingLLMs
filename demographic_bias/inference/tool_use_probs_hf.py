@@ -250,7 +250,8 @@ def run_full_inference(data: Dataset, tool_prompts: list, tokenizer, model,
     print(f"Output:         {output_path}")
     print("=" * 60)
 
-    model_nickname = model_name.replace('/', '_')
+    # Use bare basename to keep fingerprint under HF datasets' 64-char cap.
+    model_nickname = model_name.split('/')[-1]
 
     def score_fn(example):
         return score_example(example, prompt_formats_to_use, tool_prompts,

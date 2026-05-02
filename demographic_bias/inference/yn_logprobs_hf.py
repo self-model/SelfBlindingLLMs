@@ -224,7 +224,10 @@ def run_full_inference(data: Dataset, tokenizer, model, yes_token_ids, no_token_
     print(f"Output:      {output_path}")
     print("=" * 60)
 
-    model_nickname = model_name.replace('/', '_')
+    # Use bare basename so the fingerprint stays under HF datasets' 64-char cap
+    # (the org prefix on long names like "meta-llama/Llama-3.2-1B-Instruct"
+    # tips us over once a long prompt format + thinking suffix is appended).
+    model_nickname = model_name.split('/')[-1]
     run_data = data
 
     for prompt_name, prompt_format in PROMPT_DICT.items():

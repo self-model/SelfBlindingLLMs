@@ -265,8 +265,11 @@ def run_full_inference(data: Dataset, tokenizer, model, output_path: Path, model
             model_name=model_name, thinking_config=thinking_config,
         )
 
-    # Create unique fingerprint for this run
-    model_nickname = model_name.replace('/', '_')
+    # Create unique fingerprint for this run. HF datasets caps fingerprints at
+    # 64 chars, so use the bare basename (e.g. "Llama-3.2-1B-Instruct") rather
+    # than the full HF repo path ("meta-llama/Llama-3.2-1B-Instruct" → 32 chars
+    # after replace, which tips us over the 64 cap once the task suffix is added).
+    model_nickname = model_name.split('/')[-1]
 
     data = data.map(
         score_fn,

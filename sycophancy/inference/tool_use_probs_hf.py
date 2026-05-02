@@ -268,8 +268,9 @@ def run_full_inference(
             model_name=model_name, thinking_config=thinking_config,
         )
 
-    # Create unique fingerprint for this run
-    model_nickname = model_name.replace('/', '_')
+    # Create unique fingerprint for this run. Use bare basename to keep under
+    # HF datasets' 64-char cap.
+    model_nickname = model_name.split('/')[-1]
 
     data = data.map(
         score_fn,
