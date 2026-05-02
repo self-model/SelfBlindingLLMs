@@ -1,4 +1,47 @@
 ################
+# LLAMA FAMILY
+################
+# HF_TOKEN with access to meta-llama gated repos required.
+#
+# Llama 3.1/3.2: <|python_tag|> (id 128010) is the tool-call start token.
+# Meta's prompt-format docs imply this token only fires with
+# `Environment: ipython` in the system prompt (built-in tools / code
+# interpreter), but empirically (verified 2026-05-02 via greedy generation
+# on Llama-3.2-1B-Instruct and Llama-3.1-8B-Instruct using our standard
+# OpenAI-style JSON tools= path through apply_chat_template), both variants
+# DO emit <|python_tag|> as the first token of the tool-call response,
+# followed by JSON. So id 128010 is the correct measurement target across
+# the family for our harness.
+#
+# Note the JSON shape varies slightly between sizes:
+#   3.2 1B/3B: <|python_tag|>{"type":"function","function":"NAME","parameters":...}
+#   3.1 8B:    <|python_tag|>{"name":"NAME","parameters":...}
+# Doesn't affect our next-token-probability measurement — we only care
+# about the probability mass on the leading <|python_tag|> token.
+
+meta-llama/Llama-3.2-1B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 128010
+
+meta-llama/Llama-3.2-3B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 128010
+
+meta-llama/Llama-3.1-8B-Instruct:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 128010
+
+meta-llama/Llama-3.1-70B-Instruct:
+  dtype: bfloat16
+  load_in_8bit: True
+  num_gpus: 1
+  tool_use_start_token_id: 128010
+
+
+################
 # QWEN FAMILY
 ################
 
