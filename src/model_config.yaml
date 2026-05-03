@@ -41,6 +41,59 @@ meta-llama/Llama-3.1-70B-Instruct:
   tool_use_start_token_id: 128010
 
 
+
+################
+# GEMMA FAMILY
+################
+# Open-weight HF models, same code path as Qwen/Llama. HF_TOKEN with access
+# to google/gemma gated repos required.
+
+# Gemma 4:
+# - Thinking-native. Reasoning is parsed from the thought channel:
+#     <|channel>thought ... <channel|>
+#   The chat template uses <|think|> as the thinking control token.
+#   enable_thinking=False on the off-path suppresses generation in the
+#   thought channel. Note: for 31B and 26B-A4B, Google's chat template
+#   includes an empty thinking token to suppress "ghost" thought channels
+#   when thinking is disabled — don't rely on that for E2B/E4B without
+#   smoke-testing.
+# - Native tool-call markers (verified directly from tokenizer.json on the
+#   HF hub, 2026-05-02; consistent across E2B, E4B, and 31B):
+#     <|tool_call> (id=48) ... <tool_call|> (id=49)   — assistant tool calls
+#     <|tool>      (id=46) ... <tool|>      (id=47)   — tool definitions
+#     <|tool_response> (id=50) ... <tool_response|> (id=51) — tool outputs
+#     <|think|>    (id=98)                            — thinking control
+#     <|channel>   (id=100) ... <channel|> (id=101)   — channel boundaries
+#   Token-name aliases in tokenizer_config.json: stc_token, etc_token,
+#   std_token, str_token, think_token, soc_token, eoc_token.
+#   We use the numeric id (48) as our tool-call measurement target, matching
+#   the convention for Qwen (151657) and Llama (128010).
+
+google/gemma-4-E2B-it:
+  dtype: bfloat16
+  num_gpus: 1
+  thinking_family: gemma4
+  tool_use_start_token_id: 48
+
+google/gemma-4-E4B-it:
+  dtype: bfloat16
+  num_gpus: 1
+  thinking_family: gemma4
+  tool_use_start_token_id: 48
+
+google/gemma-4-31B-it:
+  dtype: bfloat16
+  num_gpus: 1
+  thinking_family: gemma4
+  tool_use_start_token_id: 48
+
+google/gemma-4-26B-A4B-it:  # MoE, 4B active / 26B total. Defer per the
+  dtype: bfloat16           # same batch=1-is-slow logic as Qwen3-30B-A3B.
+  num_gpus: 1
+  thinking_family: gemma4
+  tool_use_start_token_id: 48
+
+
 ################
 # QWEN FAMILY
 ################

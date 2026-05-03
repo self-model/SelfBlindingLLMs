@@ -5,7 +5,10 @@ Provides ThinkingConfig and render_with_thinking() — a unified prompt-renderin
 function that handles both thinking-off (passthrough to apply_chat_template)
 and thinking-on (generate-then-measure) for supported model families.
 
-Currently supported families: qwen3.
+Currently supported families:
+  - qwen3:  off-path + on-path implemented
+  - gemma4: off-path implemented (suppresses thinking via enable_thinking=False);
+            on-path is a stub (raises NotImplementedError)
 
 To add a new family (e.g. gemini): write a `_<family>_render_with_thinking`
 function with the same signature/return shape as `_qwen3_render_with_thinking`
@@ -122,9 +125,16 @@ def render_with_thinking(
             f"supported family) to its entry in model_config.yaml."
         )
 
+    if family == 'gemma4':
+        raise NotImplementedError(
+            f"thinking_family 'gemma4' is recognized but the on-path is a stub. "
+            f"Only the off-path (suppress thinking) is implemented today. "
+            f"Add a _gemma4_render_with_thinking() adapter to enable thinking-on."
+        )
+
     raise NotImplementedError(
         f"thinking_family {family!r} is recognized but not yet implemented. "
-        f"Currently supported: qwen3."
+        f"Currently supported: qwen3 (on+off), gemma4 (off only)."
     )
 
 
@@ -142,6 +152,10 @@ def _render_thinking_off(
     For qwen3 family: passes enable_thinking=False so the chat template
     doesn't emit a <think>...</think> block on add_generation_prompt=True
     (and doesn't auto-inject an empty <think></think> on continue_final_message=True).
+    For gemma4 family: passes enable_thinking=False to suppress Gemma 4's
+    thought channel (different markers from Qwen3, but the chat-template kwarg
+    is the same). Default is already off, but "ghost" thought channels can
+    leak unless the off-path is explicit.
     For other families (or absent): just a plain apply_chat_template call.
     """
     kwargs = dict(
@@ -151,7 +165,7 @@ def _render_thinking_off(
     )
     if tools is not None:
         kwargs['tools'] = tools
-    if family == 'qwen3':
+    if family in ('qwen3', 'gemma4'):
         kwargs['enable_thinking'] = False
     return tokenizer.apply_chat_template(conversation, **kwargs)
 
