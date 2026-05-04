@@ -20,7 +20,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sycophancy.config import DEFAULT_SYCOPHANCY_DATA
+from sycophancy.config import DEFAULT_SYCOPHANCY_DATA, DEFAULT_TOOL_PROMPTS_PATH
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -319,7 +319,7 @@ def main():
                         help="Path to scenarios JSONL file (default: sycophancy/data/sycophancy-two-sides-eval.jsonl)")
     parser.add_argument("--output_dir", type=str, default=str(SCRIPT_DIR.parent / "results"),
                         help="Directory for output files")
-    parser.add_argument("--tool_prompts_path", type=str, default="../../src/tool_prompts.yaml",
+    parser.add_argument("--tool_prompts_path", type=str, default=str(DEFAULT_TOOL_PROMPTS_PATH),
                         help="Path to tool descriptions YAML file")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_times", type=int, default=1,
