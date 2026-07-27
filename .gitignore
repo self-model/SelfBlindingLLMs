@@ -3,3 +3,8 @@ __pycache__/
 .Rhistory
 *.docx
 analysis/figures/
+*/results/*.jsonl
+*/results/gemini_logs/
+*/results/_*/
+*/results/*.csv
+sycophancy/data/local/
