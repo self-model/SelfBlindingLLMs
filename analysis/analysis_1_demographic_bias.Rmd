@@ -31,26 +31,25 @@ library(matrixStats)
 ```{r load and format bias data}
 source('helpers.R')
 
-# Load data for both models
-Qwen.Bias.YN.df <- load_bias_data("qwen")
-GPT.Bias.YN.df <- load_bias_data("gpt")
+# Load all available models from the registry
+all_bias <- load_bias_data()
+all_bias_response_by_prompt <- all_bias %>% with_baseline()
+all_bias_mean_abs_diff <- all_bias_response_by_prompt %>% summarize_bias()
 
-# Create response_by_prompt with baseline comparison
-Qwen.Bias.response_by_prompt <- Qwen.Bias.YN.df %>% with_baseline()
-GPT.Bias.response_by_prompt <- GPT.Bias.YN.df %>% with_baseline()
-
-# Calculate mean absolute difference stats
-Qwen.Bias.mean_abs_diff <- Qwen.Bias.response_by_prompt %>% summarize_bias()
-GPT.Bias.mean_abs_diff <- GPT.Bias.response_by_prompt %>% summarize_bias()
+# Per-model views (used for paper-figure prose references and the scatterplots)
+Qwen.Bias.YN.df <- all_bias %>% filter(model == "Qwen")
+GPT.Bias.YN.df  <- all_bias %>% filter(model == "GPT")
+Qwen.Bias.response_by_prompt <- all_bias_response_by_prompt %>% filter(model == "Qwen")
+GPT.Bias.response_by_prompt  <- all_bias_response_by_prompt %>% filter(model == "GPT")
+Qwen.Bias.mean_abs_diff <- all_bias_mean_abs_diff %>% filter(model == "Qwen")
+GPT.Bias.mean_abs_diff  <- all_bias_mean_abs_diff %>% filter(model == "GPT")
 ```
 
 ```{r bias scatterplots}
 
-# Prepare combined data
-combined_data <- GPT.Bias.response_by_prompt %>%
+# Prepare combined data across all models
+combined_data <- all_bias_response_by_prompt %>%
   dplyr::select(model, vignette, prompt, gender, race, response, removed_response) %>%
-  rbind(Qwen.Bias.response_by_prompt %>%
-    dplyr::select(model, vignette, prompt, gender, race, response, removed_response)) %>%
   filter(prompt == 'default')
 
 # Function to create plot for a model
@@ -81,8 +80,11 @@ create_plot <- function(data, model_name) {
 
 # Create and save plots for each model
 for (nickname in names(models)) {
+  if (!nickname %in% combined_data$model) next
   p <- create_plot(combined_data, nickname)
-  ggsave(sprintf("figures/demographic_bias/%s/default_plot.png", models[[nickname]]),
+  out_dir <- sprintf("figures/demographic_bias/%s", models[[nickname]])
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(out_dir, "default_plot.png"),
          p, width = 3, height = 3, dpi = 300)
 }
 
@@ -251,8 +253,11 @@ create_coef_plot <- function(data, model_name) {
 
 # Create and save coefficient plots for each model
 for (nickname in names(models)) {
+  if (!nickname %in% plot_data$model) next
   p <- create_coef_plot(plot_data, nickname)
-  ggsave(sprintf("figures/demographic_bias/%s/coefficients.png", models[[nickname]]),
+  out_dir <- sprintf("figures/demographic_bias/%s", models[[nickname]])
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(out_dir, "coefficients.png"),
          p, width = 3, height = 2, dpi = 300)
 }
 

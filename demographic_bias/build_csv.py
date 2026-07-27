@@ -131,19 +131,24 @@ def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
         patterns = pattern_map[file_type]
         found = False
 
-        # Search for files matching any pattern
+        # Search for files matching any pattern AND containing the model nickname
+        # (without the nickname filter, multi-model results dirs get mixed up — e.g.
+        # building gemini-pro picks up gemini-flash files).
         for pattern in patterns:
-            candidates = list(folder.glob(f"*{pattern}*.jsonl"))
+            candidates = [c for c in folder.glob(f"*{pattern}*.jsonl") if model in c.name]
             if candidates:
-                # Prefer aggregated files if multiple matches
                 aggregated = [c for c in candidates if "aggregated" in c.name]
-                paths[file_type] = str(aggregated[0] if aggregated else candidates[0])
+                # Prefer the most-recent timestamped file (filenames begin with YYYYMMDD_HHMMSS_)
+                if aggregated:
+                    paths[file_type] = str(sorted(aggregated)[-1])
+                else:
+                    paths[file_type] = str(sorted(candidates)[-1])
                 found = True
                 break
 
         if not found:
             raise FileNotFoundError(
-                f"Could not find {file_type} file in {folder}. "
+                f"Could not find {file_type} file in {folder} for model={model!r}. "
                 f"Tried patterns: {patterns}"
             )
 
@@ -537,9 +542,12 @@ def load_tool_prob_nested(tool_prob_path: str) -> dict:
     """
     Load tool prob data from raw format.
 
-    Handles two row shapes (per row, automatically):
-    - Flat: columns like "default__run_counterfactual_simulation__tool_prob"
-      with the prob directly. (Local inference output.)
+    Handles three row shapes (per row, automatically):
+    - Flat probs: columns like "default__run_counterfactual_simulation__tool_prob"
+      with the prob directly. (Local HF inference output.)
+    - Completion JSON: columns like "default__run_counterfactual_simulation__completion_json"
+      with an OpenAI-shaped chat-completion body. has_tool_call is derived from
+      message.tool_calls (used by Vertex Gemini scripts and OpenAI batch tool_use_probs).
     - Nested: a column named "default" whose value is a dict mapping tool
       name (or "tool_prob_with_desc___name") to prob. (OSF / legacy.)
 
@@ -575,6 +583,34 @@ def load_tool_prob_nested(tool_prob_path: str) -> dict:
                 found_flat = True
 
             if found_flat:
+                continue
+
+            # Try completion_json format (OpenAI batch / Vertex Gemini sync output):
+            # parse OpenAI-shape body and derive boolean tool-call indicator.
+            found_completion = False
+            for k, v in row.items():
+                m = TOOL_USE_RE.match(k)
+                if not m:
+                    continue
+                prompt_format = m.group("prompt_format")
+                tool_name = m.group("tool_name")
+                if prompt_format not in INCLUDED_PROMPT_FORMATS:
+                    continue
+                if tool_name != INCLUDED_TOOL:
+                    continue
+                completion = safe_json_loads(v)
+                if not completion:
+                    continue
+                choice0 = extract_choice0(completion)
+                if not choice0:
+                    continue
+                message = choice0.get("message") or {}
+                has_tool_call = bool(message.get("tool_calls"))
+                lookup_key = (dq_id, row.get("race"), row.get("gender"), prompt_format)
+                tool_prob_lookup[lookup_key] = float(has_tool_call)
+                found_completion = True
+
+            if found_completion:
                 continue
 
             # Fall back to nested format (OSF / legacy)

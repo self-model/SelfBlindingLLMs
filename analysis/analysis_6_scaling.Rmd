@@ -1,0 +1,266 @@
+---
+title: "analysis 6 family scaling curves"
+output: word_document
+date: "2026-05-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(tidyverse)
+library(jsonlite)
+library(broom)
+library(forcats)
+library(patchwork)
+library(fs)
+library(ggplot2)
+
+# Output directory for scaling figures
+fs::dir_create("figures/scaling", recurse = TRUE)
+```
+
+```{r load all models}
+source('helpers.R')
+source('parse_tool_generations.R')
+source('loadAndFormatSycophancyData.R')
+
+# Load every available model
+all_bias <- load_bias_data()
+all_bias_response_by_prompt <- all_bias %>% with_baseline()
+all_bias_mean_abs_diff <- all_bias_response_by_prompt %>% summarize_bias()
+all_tool_calls <- load_tool_use_data()
+
+# Attach family + size_b from the registry
+attach_registry <- function(df) {
+  df %>% left_join(
+    models_df %>% select(model = nickname, family, size_b),
+    by = "model"
+  )
+}
+
+bias_for_scaling <- attach_registry(all_bias_mean_abs_diff)
+tool_for_scaling <- all_tool_calls %>%
+  group_by(model, prompt) %>%
+  summarise(prop_tool_use = mean(tool_prob), .groups = "drop") %>%
+  attach_registry()
+
+# Family color palette (assign distinct colors per family)
+family_levels <- c("Qwen2.5", "Qwen3", "Llama-3.1", "Llama-3.2", "Gemma-4", "GPT", "DeepSeek", "Gemini-2.5")
+family_colors <- c(
+  "Qwen2.5" = "#1F77B4",
+  "Qwen3" = "#17BECF",
+  "Llama-3.1" = "#D62728",
+  "Llama-3.2" = "#FF9896",
+  "Gemma-4" = "#2CA02C",
+  "GPT" = "#7F7F7F",
+  "DeepSeek" = "#9467BD",
+  "Gemini-2.5" = "#FF7F0E"
+)
+```
+
+```{r fig1 bias by size}
+prompt_labels <- c(
+  default = "Default",
+  dont_discriminate = "Don't Discriminate",
+  ignore = "Ignore",
+  if_you_didnt_know = "If You Didn't Know",
+  remove_in_context = "Remove in Context",
+  removed = "Removed"
+)
+
+bias_plot_data <- bias_for_scaling %>%
+  filter(!is.na(size_b),
+         prompt %in% c('default','dont_discriminate','ignore','if_you_didnt_know','remove_in_context')) %>%
+  mutate(prompt = factor(prompt, levels = names(prompt_labels)),
+         family = factor(family, levels = family_levels))
+
+# Reference lines from closed-source / NA-size models (drawn as horizontal dashes)
+bias_ref <- bias_for_scaling %>%
+  filter(is.na(size_b),
+         prompt %in% c('default','dont_discriminate','ignore','if_you_didnt_know','remove_in_context')) %>%
+  mutate(prompt = factor(prompt, levels = names(prompt_labels)))
+
+fig1 <- ggplot(bias_plot_data,
+               aes(x = size_b, y = mean_abs_diff, color = family, group = family)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = 0.05, linewidth = 0.4) +
+  geom_hline(data = bias_ref, aes(yintercept = mean_abs_diff, color = family),
+             linetype = "dashed", linewidth = 0.4, alpha = 0.7) +
+  facet_wrap(~ prompt, labeller = labeller(prompt = prompt_labels), nrow = 1) +
+  scale_x_log10() +
+  scale_color_manual(values = family_colors, drop = FALSE) +
+  labs(
+    x = "Model size (billion parameters, log scale)",
+    y = "Mean absolute difference from true blindness",
+    color = "Family"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave('figures/scaling/fig1_bias_by_size.png', fig1, height = 4, width = 14, dpi = 300)
+fig1
+```
+
+```{r fig2 tool prob by size}
+tool_plot_data <- tool_for_scaling %>%
+  filter(!is.na(size_b),
+         prompt %in% c('default','dont_discriminate','ignore','if_you_didnt_know','remove_in_context')) %>%
+  mutate(prompt = factor(prompt, levels = names(prompt_labels)),
+         family = factor(family, levels = family_levels))
+
+tool_ref <- tool_for_scaling %>%
+  filter(is.na(size_b),
+         prompt %in% c('default','dont_discriminate','ignore','if_you_didnt_know','remove_in_context')) %>%
+  mutate(prompt = factor(prompt, levels = names(prompt_labels)))
+
+fig2 <- ggplot(tool_plot_data,
+               aes(x = size_b, y = prop_tool_use, color = family, group = family)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 2) +
+  geom_hline(data = tool_ref, aes(yintercept = prop_tool_use, color = family),
+             linetype = "dashed", linewidth = 0.4, alpha = 0.7) +
+  facet_wrap(~ prompt, labeller = labeller(prompt = prompt_labels), nrow = 1) +
+  scale_x_log10() +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_color_manual(values = family_colors, drop = FALSE) +
+  labs(
+    x = "Model size (billion parameters, log scale)",
+    y = "p(self-call)",
+    color = "Family"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave('figures/scaling/fig2_tool_prob_by_size.png', fig2, height = 4, width = 14, dpi = 300)
+fig2
+```
+
+```{r fig3 tool de-biases by size}
+# Marginal response after self-call: use load_tool_response_data + pivot,
+# build the marginal_pyes via the same logic as analysis_4
+combined_resp_df <- load_tool_response_data() %>% pivot_conditional_logits()
+
+removed_pyes_df <- all_bias %>%
+  filter(prompt == 'removed') %>%
+  mutate(removed_pyes = exp(response) / (1 + exp(response))) %>%
+  select(model, vignette, race, gender, removed_pyes)
+
+after_self_call_df <- combined_resp_df %>%
+  filter(tool_desc == 'run counterfactual simulation',
+         prompt %in% c('default','dont_discriminate','ignore','if_you_didnt_know','remove_in_context')) %>%
+  mutate(after_self_call_pyes = exp(yes_logit) / (exp(yes_logit) + exp(no_logit))) %>%
+  select(model, vignette, race, gender, prompt, model_response, after_self_call_pyes)
+
+marginal_response_data <- removed_pyes_df %>%
+  inner_join(after_self_call_df, by = c("model", "vignette", "race", "gender")) %>%
+  group_by(model, vignette, race, gender, prompt) %>%
+  summarise(
+    removed_pyes = first(removed_pyes),
+    after_self_call_yes = after_self_call_pyes[model_response == 'Yes'][1],
+    after_self_call_no  = after_self_call_pyes[model_response == 'No'][1],
+    marginal_pyes = removed_pyes * after_self_call_yes + (1 - removed_pyes) * after_self_call_no,
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(marginal_pyes), marginal_pyes > 0, marginal_pyes < 1) %>%
+  mutate(
+    marginal_response = log(marginal_pyes) - log(1 - marginal_pyes),
+    removed_response  = log(removed_pyes)  - log(1 - removed_pyes)
+  )
+
+# Mean absolute deviation of the marginal (post-self-call) response from true blindness
+marginal_summary <- marginal_response_data %>%
+  group_by(model, prompt) %>%
+  summarise(
+    mean_abs_diff_marginal = mean(abs(marginal_response - removed_response)),
+    se_abs_diff_marginal = sd(abs(marginal_response - removed_response)) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  attach_registry() %>%
+  mutate(prompt = factor(prompt, levels = names(prompt_labels)),
+         family = factor(family, levels = family_levels))
+
+marginal_plot_data <- marginal_summary %>% filter(!is.na(size_b))
+marginal_ref <- marginal_summary %>% filter(is.na(size_b))
+
+fig3 <- ggplot(marginal_plot_data,
+               aes(x = size_b, y = mean_abs_diff_marginal, color = family, group = family)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_abs_diff_marginal - se_abs_diff_marginal,
+                    ymax = mean_abs_diff_marginal + se_abs_diff_marginal),
+                width = 0.05, linewidth = 0.4) +
+  geom_hline(data = marginal_ref, aes(yintercept = mean_abs_diff_marginal, color = family),
+             linetype = "dashed", linewidth = 0.4, alpha = 0.7) +
+  facet_wrap(~ prompt, labeller = labeller(prompt = prompt_labels), nrow = 1) +
+  scale_x_log10() +
+  scale_color_manual(values = family_colors, drop = FALSE) +
+  labs(
+    x = "Model size (billion parameters, log scale)",
+    y = "Mean absolute difference from true blindness\n(after self-call)",
+    color = "Family"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave('figures/scaling/fig3_tool_de_biases.png', fig3, height = 4, width = 14, dpi = 300)
+fig3
+```
+
+```{r fig4 sycophancy by size}
+sycophancy_summary <- combined_sycophancy %>%
+  group_by(model, prompt) %>%
+  summarise(
+    mean_response = mean(response - removed_response),
+    se_response = sd(response - removed_response) / sqrt(n()),
+    mean_marginal = mean(marginal_response - removed_response, na.rm = TRUE),
+    se_marginal = sd(marginal_response - removed_response, na.rm = TRUE) /
+                  sqrt(sum(!is.na(marginal_response))),
+    .groups = "drop"
+  ) %>%
+  attach_registry()
+
+sycophancy_summary <- sycophancy_summary %>%
+  mutate(family = factor(family, levels = family_levels))
+
+syc_plot_data <- sycophancy_summary %>% filter(!is.na(size_b))
+syc_ref <- sycophancy_summary %>% filter(is.na(size_b))
+
+# We plot the absolute sycophancy magnitude (|response - removed_response|) summarized to row level above.
+# For a more informative scaling figure: show original sycophancy (response - removed) and the
+# self-call-mitigated marginal sycophancy as separate panels per prompt.
+syc_long <- syc_plot_data %>%
+  pivot_longer(cols = c(mean_response, mean_marginal),
+               names_to = "intervention",
+               values_to = "sycophancy") %>%
+  mutate(intervention = recode(intervention,
+                               "mean_response" = "Original",
+                               "mean_marginal" = "After self-call"))
+
+fig4 <- ggplot(syc_long,
+               aes(x = size_b, y = sycophancy, color = family, linetype = intervention,
+                   group = interaction(family, intervention))) +
+  geom_hline(yintercept = 0, color = "gray70", linewidth = 0.3) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ prompt, nrow = 1) +
+  scale_x_log10() +
+  scale_color_manual(values = family_colors, drop = FALSE) +
+  labs(
+    x = "Model size (billion parameters, log scale)",
+    y = "Sycophancy (response − blinded response)",
+    color = "Family",
+    linetype = "Condition"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave('figures/scaling/fig4_sycophancy.png', fig4, height = 4, width = 14, dpi = 300)
+fig4
+```

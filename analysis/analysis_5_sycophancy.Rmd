@@ -40,46 +40,27 @@ source('loadAndFormatSycophancyData.R')
 
 # Reshape for scatterplots
 # Note: Round removed_response to avoid floating point precision issues in pivot_wider
-Qwen.sycophancy_wide <- Qwen.sycophancy_processed %>%
-  select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
+combined_sycophancy_wide <- combined_sycophancy %>%
+  select(model, scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
   mutate(removed_response = round(removed_response, 14)) %>%
   pivot_wider(
     names_from = my_version,
     values_from = c(response, marginal_response),
-    id_cols = c(scenario_id, prompt, removed_response)
+    id_cols = c(model, scenario_id, prompt, removed_response)
   ) %>%
   rename(
     response_when_A_is_me = response_A,
     response_when_B_is_me = response_B,
     marginal_when_A_is_me = marginal_response_A,
     marginal_when_B_is_me = marginal_response_B
-  ) %>%
-  mutate(model = "Qwen")
+  )
 
-GPT.sycophancy_wide <- GPT.sycophancy_processed %>%
-  select(scenario_id, my_version, prompt, response, removed_response, marginal_response) %>%
-  mutate(removed_response = round(removed_response, 14)) %>%
-  pivot_wider(
-    names_from = my_version,
-    values_from = c(response, marginal_response),
-    id_cols = c(scenario_id, prompt, removed_response)
-  ) %>%
-  rename(
-    response_when_A_is_me = response_A,
-    response_when_B_is_me = response_B,
-    marginal_when_A_is_me = marginal_response_A,
-    marginal_when_B_is_me = marginal_response_B
-  ) %>%
-  mutate(model = "GPT")
+# Backwards-compat aliases for the paper figures
+Qwen.sycophancy_wide <- combined_sycophancy_wide %>% filter(model == "Qwen")
+GPT.sycophancy_wide  <- combined_sycophancy_wide %>% filter(model == "GPT")
 
-# Combine
-combined_sycophancy_wide <- bind_rows(Qwen.sycophancy_wide, GPT.sycophancy_wide)
-
-# Check dimensions
-cat(sprintf("Qwen wide: %d rows (should be 60 scenarios × 5 prompts = 300)\n", 
-            nrow(Qwen.sycophancy_wide)))
-cat(sprintf("GPT wide: %d rows (should be 60 scenarios × 5 prompts = 300)\n", 
-            nrow(GPT.sycophancy_wide)))
+# Check dimensions (60 scenarios * 5 prompts = 300 rows per model)
+print(combined_sycophancy_wide %>% dplyr::count(model, name = "wide_n"))
 
 # Preview
 head(combined_sycophancy_wide)
@@ -107,18 +88,21 @@ GPT.sycophancy_wide %>%
 create_sycophancy_plot_with_coef <- function(data, model_name, prompt_name, prompt_color) {
   
   # Calculate mean displacements for this prompt and Default
+  # na.rm = TRUE: drop NaN rows (e.g. Gemini's -inf-logit error rows propagating
+  # through marginal_pA). Without it, mean() returns NaN and geom_point silently
+  # drops the black "blinded" point from the displacement subplot.
   summary_stats <- data %>%
     filter(model == model_name, prompt %in% c(prompt_name, "Default")) %>%
     group_by(prompt) %>%
     summarise(
-      mean_displacement = mean(response_when_A_is_me - response_when_B_is_me),
-      se_displacement = sd(response_when_A_is_me - response_when_B_is_me) / sqrt(n()),
+      mean_displacement = mean(response_when_A_is_me - response_when_B_is_me, na.rm = TRUE),
+      se_displacement = sd(response_when_A_is_me - response_when_B_is_me, na.rm = TRUE) / sqrt(sum(!is.na(response_when_A_is_me - response_when_B_is_me))),
       t_displacement = mean_displacement / se_displacement,
-      p_displacement = 2 * pt(abs(t_displacement), n() - 1, lower.tail = FALSE),
-      mean_marginal_displacement = mean(marginal_when_A_is_me - marginal_when_B_is_me),
-      se_marginal_displacement = sd(marginal_when_A_is_me - marginal_when_B_is_me) / sqrt(n()),
+      p_displacement = 2 * pt(abs(t_displacement), pmax(sum(!is.na(response_when_A_is_me - response_when_B_is_me)) - 1, 1), lower.tail = FALSE),
+      mean_marginal_displacement = mean(marginal_when_A_is_me - marginal_when_B_is_me, na.rm = TRUE),
+      se_marginal_displacement = sd(marginal_when_A_is_me - marginal_when_B_is_me, na.rm = TRUE) / sqrt(sum(!is.na(marginal_when_A_is_me - marginal_when_B_is_me))),
       t_marginal = mean_marginal_displacement / se_marginal_displacement,
-      p_marginal = 2 * pt(abs(t_marginal), n() - 1, lower.tail = FALSE),
+      p_marginal = 2 * pt(abs(t_marginal), pmax(sum(!is.na(marginal_when_A_is_me - marginal_when_B_is_me)) - 1, 1), lower.tail = FALSE),
       .groups = "drop"
     ) %>%
     mutate(
@@ -228,24 +212,24 @@ prompt_colors <- c(
   "Neutral" = "#FF7F00"
 )
 
-# Create plots for GPT
-gpt_ignore <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "Ignore", prompt_colors["Ignore"])
-gpt_dont <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "Don't Be Sycophantic", prompt_colors["Don't Be Sycophantic"])
-gpt_if <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "GPT", "If You Didn't Know", prompt_colors["If You Didn't Know"])
-
-# Create plots for Qwen
-qwen_ignore <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "Ignore", prompt_colors["Ignore"])
-qwen_dont <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "Don't Be Sycophantic", prompt_colors["Don't Be Sycophantic"])
-qwen_if <- create_sycophancy_plot_with_coef(combined_sycophancy_wide, "Qwen", "If You Didn't Know", prompt_colors["If You Didn't Know"])
-
-# Combine separately for each model
 library(patchwork)
-gpt_grid <- gpt_ignore | gpt_dont | gpt_if
-qwen_grid <- qwen_ignore | qwen_dont | qwen_if
 
-# Save using models from helpers.R
-ggsave(sprintf('figures/sycophancy/%s_sycophancy.png', models[["GPT"]]), plot = gpt_grid, height = 5, width = 15, dpi = 300)
-ggsave(sprintf('figures/sycophancy/%s_sycophancy.png', models[["Qwen"]]), plot = qwen_grid, height = 5, width = 15, dpi = 300)
+# Build and save scatter+coef grids for every model in the loaded data
+for (nickname in names(models)) {
+  if (!nickname %in% combined_sycophancy_wide$model) next
+  prompts_present <- combined_sycophancy_wide %>%
+    filter(model == nickname) %>% pull(prompt) %>% unique()
+  panels <- list()
+  for (p_name in c("Ignore", "Don't Be Sycophantic", "If You Didn't Know")) {
+    if (!p_name %in% prompts_present) next
+    panels[[p_name]] <- create_sycophancy_plot_with_coef(
+      combined_sycophancy_wide, nickname, p_name, prompt_colors[p_name])
+  }
+  if (length(panels) == 0) next
+  grid <- Reduce(`|`, panels)
+  ggsave(sprintf('figures/sycophancy/%s_sycophancy.png', models[[nickname]]),
+         plot = grid, height = 5, width = 5 * length(panels), dpi = 300)
+}
 
 ```
 
@@ -274,8 +258,8 @@ sycophancy_mean_abs_displacement <- combined_sycophancy_wide %>%
   ) %>%
   group_by(model, prompt, response_type) %>%
   summarise(
-    mean_abs_displacement = mean(abs_displacement),
-    se_abs_displacement = sd(abs_displacement) / sqrt(n()),
+    mean_abs_displacement = mean(abs_displacement, na.rm = TRUE),
+    se_abs_displacement = sd(abs_displacement, na.rm = TRUE) / sqrt(sum(!is.na(abs_displacement))),
     .groups = "drop"
   )
 
@@ -360,23 +344,21 @@ create_sycophancy_barplot <- function(data_original, data_blinded, model_name, o
   return(p)
 }
 
-# Create barplots using models from helpers.R
-gpt_barplot <- create_sycophancy_barplot(
-  barplot_data_original %>% filter(prompt !='Neutral'),
-  barplot_data_blinded %>% filter(prompt !='Neutral'),
-  "GPT",
-  sprintf('figures/sycophancy/%s_sycophancy_barplot.png', models[["GPT"]])
-)
+# Create barplots for every model
+sycophancy_barplots <- list()
+for (nickname in names(models)) {
+  if (!nickname %in% barplot_data_original$model) next
+  sycophancy_barplots[[nickname]] <- create_sycophancy_barplot(
+    barplot_data_original %>% filter(prompt !='Neutral'),
+    barplot_data_blinded  %>% filter(prompt !='Neutral'),
+    nickname,
+    sprintf('figures/sycophancy/%s_sycophancy_barplot.png', models[[nickname]])
+  )
+}
 
-qwen_barplot <- create_sycophancy_barplot(
-  barplot_data_original %>% filter(prompt !='Neutral'),
-  barplot_data_blinded %>% filter(prompt !='Neutral'),
-  "Qwen",
-  sprintf('figures/sycophancy/%s_sycophancy_barplot.png', models[["Qwen"]])
-)
-
-print(gpt_barplot)
-print(qwen_barplot)
+# Backwards-compat aliases for paper figures
+gpt_barplot  <- sycophancy_barplots[["GPT"]]
+qwen_barplot <- sycophancy_barplots[["Qwen"]]
 ```
 
 ```{r complete plots}
@@ -464,22 +446,22 @@ create_sycophancy_complete_figure <- function(data, mean_abs_data_original, mean
   return(combined)
 }
 
-# Create complete figures using models from helpers.R
-gpt_complete <- create_sycophancy_complete_figure(
-  combined_sycophancy_wide,
-  barplot_data_original,
-  barplot_data_blinded,
-  "GPT",
-  sprintf('figures/sycophancy/%s_sycophancy_complete.png', models[["GPT"]])
-)
+# Create complete figures for every model
+sycophancy_complete_figs <- list()
+for (nickname in names(models)) {
+  if (!nickname %in% combined_sycophancy_wide$model) next
+  sycophancy_complete_figs[[nickname]] <- create_sycophancy_complete_figure(
+    combined_sycophancy_wide,
+    barplot_data_original,
+    barplot_data_blinded,
+    nickname,
+    sprintf('figures/sycophancy/%s_sycophancy_complete.png', models[[nickname]])
+  )
+}
 
-qwen_complete <- create_sycophancy_complete_figure(
-  combined_sycophancy_wide,
-  barplot_data_original,
-  barplot_data_blinded,
-  "Qwen",
-  sprintf('figures/sycophancy/%s_sycophancy_complete.png', models[["Qwen"]])
-)
+# Backwards-compat aliases for paper figures
+gpt_complete  <- sycophancy_complete_figs[["GPT"]]
+qwen_complete <- sycophancy_complete_figs[["Qwen"]]
 
 ```
 

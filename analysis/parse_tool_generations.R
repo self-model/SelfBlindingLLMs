@@ -88,57 +88,49 @@ load_qwen_tool_generations <- function() {
     )
 }
 
-# Load tool use data with CSV probabilities and generation parsing
-load_tool_use_data <- function(model = c("qwen", "gpt", "both")) {
-  model <- match.arg(model)
-
-  # Load Qwen: CSV with tool_prob + parsed generations
-  # Uses models from helpers.R (must be sourced first)
-  qwen_prob <- read.csv(sprintf("../demographic_bias/results/demographic_bias_processed_%s.csv",
-                                 models[["Qwen"]])) %>%
-    mutate(model = 'Qwen',
-           model_full = models[["Qwen"]],
-           vignette = decision_question_id,
-           prompt = prompt_format)
-
-  qwen_gen <- load_qwen_tool_generations()
-
-  # If generation data exists, join it; otherwise just use prob data
-  if (!is.null(qwen_gen)) {
-    qwen_combined <- qwen_prob %>%
-      left_join(
-        qwen_gen %>%
-          select(vignette, race, gender, prompt, tool_call_text, has_tool_call,
-                 tool_call_prompt, includes_gender, includes_race, includes_gendered_pronouns),
-        by = c("vignette", "race", "gender", "prompt")
-      )
-  } else {
-    # No generation data available - add placeholder columns
-    qwen_combined <- qwen_prob %>%
-      mutate(
-        tool_call_text = NA_character_,
-        has_tool_call = NA,
-        tool_call_prompt = NA_character_,
-        includes_gender = NA,
-        includes_race = NA,
-        includes_gendered_pronouns = NA
-      )
+# Load tool use data with CSV probabilities and (Qwen-only) generation parsing
+# Returns a single bound dataframe across all requested models, with placeholder
+# tool_call_text/has_tool_call/etc. columns NA for non-Qwen models (until those
+# families' generations JSONL parsers are added).
+load_tool_use_data <- function(nicknames = NULL) {
+  if (is.null(nicknames)) {
+    nicknames <- .available_nicknames("../demographic_bias/results",
+                                      "demographic_bias_processed")
   }
 
-  # Load GPT: CSV with tool_prob (no generation parsing available in merged format)
-  # Note: GPT tool_prob is aggregated from multiple runs, so we use it as-is
-  # Add tool_call as alias for compatibility with scripts that expect boolean
-  gpt_combined <- read.csv(sprintf("../demographic_bias/results/demographic_bias_processed_%s.csv",
-                                    models[["GPT"]])) %>%
-    mutate(model = 'GPT',
-           model_full = models[["GPT"]],
-           vignette = decision_question_id,
-           prompt = prompt_format,
-           tool_call = tool_prob)  # tool_prob is already proportion of tool calls
+  qwen_gen <- if ("Qwen" %in% nicknames) load_qwen_tool_generations() else NULL
 
-  switch(model,
-         qwen = qwen_combined,
-         gpt = gpt_combined,
-         both = list(qwen = qwen_combined, gpt = gpt_combined)
-  )
+  load_one <- function(nickname) {
+    full_name <- models[[nickname]]
+    path <- sprintf("../demographic_bias/results/demographic_bias_processed_%s.csv", full_name)
+    if (!file.exists(path)) return(NULL)
+    df <- read.csv(path) %>%
+      mutate(model = nickname,
+             model_full = full_name,
+             vignette = decision_question_id,
+             prompt = prompt_format)
+
+    if (nickname == "Qwen" && !is.null(qwen_gen)) {
+      df %>%
+        left_join(
+          qwen_gen %>%
+            select(vignette, race, gender, prompt, tool_call_text, has_tool_call,
+                   tool_call_prompt, includes_gender, includes_race,
+                   includes_gendered_pronouns),
+          by = c("vignette", "race", "gender", "prompt")
+        )
+    } else {
+      df %>%
+        mutate(
+          tool_call_text = NA_character_,
+          has_tool_call = NA,
+          tool_call_prompt = NA_character_,
+          includes_gender = NA,
+          includes_race = NA,
+          includes_gendered_pronouns = NA
+        )
+    }
+  }
+
+  bind_rows(lapply(nicknames, load_one))
 }

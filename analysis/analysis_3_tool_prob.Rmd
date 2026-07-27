@@ -32,24 +32,20 @@ library(matrixStats)
 source('helpers.R')
 source('parse_tool_generations.R')
 
-# Load bias data
-Qwen.Bias.YN.df <- load_bias_data("qwen")
-GPT.Bias.YN.df <- load_bias_data("gpt")
+# Load all available models from the registry
+all_bias <- load_bias_data()
+all_tool_calls <- load_tool_use_data()
 
-# Load tool use data (CSV + generation parsing for Qwen)
-tool_data <- load_tool_use_data("both")
-Qwen.Bias.tool_use_combined <- tool_data$qwen
-GPT.Bias.tool_use_combined <- tool_data$gpt
+# Backwards-compat aliases for the paper figures
+Qwen.Bias.YN.df <- all_bias %>% filter(model == "Qwen")
+GPT.Bias.YN.df  <- all_bias %>% filter(model == "GPT")
+Qwen.Bias.tool_use_combined <- all_tool_calls %>% filter(model == "Qwen")
+GPT.Bias.tool_use_combined  <- all_tool_calls %>% filter(model == "GPT")
 ```
 
 
 ```{r plot}
-# Combine the two dataframes
-# Note: vignette column already exists from helpers (renamed from vignette)
-all_tool_calls <- bind_rows(
-  GPT.Bias.tool_use_combined,
-  Qwen.Bias.tool_use_combined
-)
+# all_tool_calls is now produced by load_tool_use_data() in the chunk above
 
 # Define labels and colors
 prompt_labels <- c(
@@ -68,17 +64,15 @@ prompt_colors <- c(
   removed = "black"               # Gray
 )
 
-# Calculate tool use counts for GPT
-gpt_counts_df <- all_tool_calls %>%
-  filter(model == 'GPT') %>%
-  group_by(prompt) %>%
-  summarise(prop_tool_use = mean(tool_call))
-         
-# Calculate tool use counts for Qwen
-qwen_counts_df <- all_tool_calls %>%
-  filter(model == 'Qwen') %>%
-  group_by(prompt) %>%
-  summarise(prop_tool_use = mean(tool_prob))
+# Calculate tool use counts per model from tool_prob (next-token prob for HF
+# models; aggregated proportion of tool calls for the OpenAI batch path)
+all_counts_df <- all_tool_calls %>%
+  group_by(model, prompt) %>%
+  summarise(prop_tool_use = mean(tool_prob), .groups = "drop")
+
+# Backwards-compat aliases for the paper prose
+gpt_counts_df  <- all_counts_df %>% filter(model == "GPT")
+qwen_counts_df <- all_counts_df %>% filter(model == "Qwen")
 
 # Function to create tool use plot
 create_tool_use_plot <- function(counts_df) {
@@ -100,10 +94,12 @@ create_tool_use_plot <- function(counts_df) {
 }
 
 # Create and save tool use plots for each model
-counts_list <- list("GPT" = gpt_counts_df, "Qwen" = qwen_counts_df)
 for (nickname in names(models)) {
-  p <- create_tool_use_plot(counts_list[[nickname]])
-  ggsave(sprintf('figures/self-calls/%s/proportion_tool_use_demographic_bias.png', models[[nickname]]),
+  if (!nickname %in% all_counts_df$model) next
+  p <- create_tool_use_plot(all_counts_df %>% filter(model == nickname))
+  out_dir <- sprintf('figures/self-calls/%s', models[[nickname]])
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(out_dir, 'proportion_tool_use_demographic_bias.png'),
          p, height = 2.5, width = 4, dpi = 300)
 }
 
@@ -163,10 +159,15 @@ create_inclusion_plot <- function(data, model_nickname) {
     guides(color = "none")
 }
 
-# Create and save inclusion plots for each model
+# Create and save inclusion plots for each model that has parsed tool-call text
+# (currently only Qwen via parse_tool_generations.R; others get all-NA proportions)
 for (nickname in names(models)) {
+  model_props <- inclusion_df %>% filter(model == nickname)
+  if (nrow(model_props) == 0 || all(is.na(model_props$proportion))) next
   p <- create_inclusion_plot(inclusion_df, nickname)
-  ggsave(sprintf('figures/self-calls/%s/proportion_included_demographic_bias.png', models[[nickname]]),
+  out_dir <- sprintf('figures/self-calls/%s', models[[nickname]])
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(out_dir, 'proportion_included_demographic_bias.png'),
          p, height = 3, width = 4, dpi = 300)
 }
 ```

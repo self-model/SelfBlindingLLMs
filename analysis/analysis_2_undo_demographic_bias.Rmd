@@ -30,17 +30,18 @@ library(matrixStats)
 ```{r load and format bias data}
 source('helpers.R')
 
-# Load data for both models
-Qwen.Bias.YN.df <- load_bias_data("qwen")
-GPT.Bias.YN.df <- load_bias_data("gpt")
+# Load all available models from the registry
+all_bias <- load_bias_data()
+all_bias_response_by_prompt <- all_bias %>% with_baseline()
+all_bias_mean_abs_diff <- all_bias_response_by_prompt %>% summarize_bias()
 
-# Create response_by_prompt with baseline comparison
-Qwen.Bias.response_by_prompt <- Qwen.Bias.YN.df %>% with_baseline()
-GPT.Bias.response_by_prompt <- GPT.Bias.YN.df %>% with_baseline()
-
-# Calculate mean absolute difference stats
-Qwen.Bias.mean_abs_diff <- Qwen.Bias.response_by_prompt %>% summarize_bias()
-GPT.Bias.mean_abs_diff <- GPT.Bias.response_by_prompt %>% summarize_bias()
+# Per-model views (used for paper-figure prose references)
+Qwen.Bias.YN.df <- all_bias %>% filter(model == "Qwen")
+GPT.Bias.YN.df  <- all_bias %>% filter(model == "GPT")
+Qwen.Bias.response_by_prompt <- all_bias_response_by_prompt %>% filter(model == "Qwen")
+GPT.Bias.response_by_prompt  <- all_bias_response_by_prompt %>% filter(model == "GPT")
+Qwen.Bias.mean_abs_diff <- all_bias_mean_abs_diff %>% filter(model == "Qwen")
+GPT.Bias.mean_abs_diff  <- all_bias_mean_abs_diff %>% filter(model == "GPT")
 ```
 
 ```{r bias prompts stats}
@@ -141,13 +142,18 @@ extract_model_stats <- function(data, model_name) {
 }
 
 # ------------------------------------------------------------------------------
-# Extract stats for both models
+# Extract stats for every model in the loaded data
 # ------------------------------------------------------------------------------
-qwen_stats <- extract_model_stats(Qwen.Bias.response_by_prompt, "Qwen")
-gpt_stats <- extract_model_stats(GPT.Bias.response_by_prompt, "GPT")
+all_stats <- bind_rows(lapply(
+  unique(all_bias_response_by_prompt$model),
+  function(m) extract_model_stats(
+    all_bias_response_by_prompt %>% filter(model == m), m
+  )
+))
 
-# Combine
-all_stats <- bind_rows(qwen_stats, gpt_stats)
+# Backwards-compat aliases for the original two paper models
+qwen_stats <- all_stats %>% filter(model == "Qwen")
+gpt_stats  <- all_stats %>% filter(model == "GPT")
 
 # ------------------------------------------------------------------------------
 # Helper function to get stat for inline use
@@ -363,28 +369,27 @@ create_coef_plot <- function(coef_data, prompt_name, default_ref, prompt_color) 
   return(all_coefs)
 }
 
-# Generate figures and store coefficients using models from helpers.R
-bias_data_list <- list(
-  "GPT" = list(response = GPT.Bias.response_by_prompt, mean_abs_diff = GPT.Bias.mean_abs_diff),
-  "Qwen" = list(response = Qwen.Bias.response_by_prompt, mean_abs_diff = Qwen.Bias.mean_abs_diff)
-)
-
+# Generate figures and store coefficients for every model in the loaded data
 all_coefs_list <- list()
 for (nickname in names(models)) {
+  if (!nickname %in% all_bias_response_by_prompt$model) next
+  out_dir <- sprintf('figures/demographic_bias/%s', models[[nickname]])
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   coefs <- create_bias_figure(
-    bias_data_list[[nickname]]$response,
-    bias_data_list[[nickname]]$mean_abs_diff,
+    all_bias_response_by_prompt %>% filter(model == nickname),
+    all_bias_mean_abs_diff %>% filter(model == nickname),
     models[[nickname]],
-    sprintf('figures/demographic_bias/%s/combined_scatter_coef_barplot.png', models[[nickname]])
+    file.path(out_dir, 'combined_scatter_coef_barplot.png')
   )
   all_coefs_list[[nickname]] <- coefs
 }
 
+# Backwards-compat aliases for the paper figures
 gpt_coefs <- all_coefs_list[["GPT"]]
 qwen_coefs <- all_coefs_list[["Qwen"]]
 
 # Combine all coefficients for easy access
-all_bias_coefs <- bind_rows(gpt_coefs, qwen_coefs)
+all_bias_coefs <- bind_rows(all_coefs_list)
 
 # View all coefficients
 print(all_bias_coefs)
@@ -443,9 +448,9 @@ find_gender_bias_sign_flips <- function(data, model_name) {
     filter(sign(response_bias_mean) != sign(default_bias_mean)) %>%
     mutate(
       model = model_name,
-      # Add direction labels
-      default_favors = ifelse(default_bias_mean > 0, "male", "female"),
-      intervention_favors = ifelse(response_bias_mean > 0, "male", "female"),
+      # Add direction labels (force character to avoid logical NA when empty)
+      default_favors = if_else(default_bias_mean > 0, "male", "female", missing = NA_character_),
+      intervention_favors = if_else(response_bias_mean > 0, "male", "female", missing = NA_character_),
       # Format for reporting
       default_stat = sprintf("%.2f, SE=%.2f", default_bias_mean, default_bias_se),
       intervention_stat = sprintf("%.2f, SE=%.2f", response_bias_mean, response_bias_se)
@@ -458,12 +463,17 @@ find_gender_bias_sign_flips <- function(data, model_name) {
   return(sign_flips)
 }
 
-# Find sign flips for both models
-gpt_sign_flips <- find_gender_bias_sign_flips(GPT.Bias.response_by_prompt, "GPT")
-qwen_sign_flips <- find_gender_bias_sign_flips(Qwen.Bias.response_by_prompt, "Qwen")
+# Find sign flips for every model
+all_sign_flips <- bind_rows(lapply(
+  unique(all_bias_response_by_prompt$model),
+  function(m) find_gender_bias_sign_flips(
+    all_bias_response_by_prompt %>% filter(model == m), m
+  )
+))
 
-# Combine
-all_sign_flips <- bind_rows(gpt_sign_flips, qwen_sign_flips)
+# Backwards-compat aliases for the paper prose
+gpt_sign_flips  <- all_sign_flips %>% filter(model == "GPT")
+qwen_sign_flips <- all_sign_flips %>% filter(model == "Qwen")
 
 
 
@@ -476,15 +486,17 @@ scenario_33 <- all_sign_flips %>% filter(vignette == 33)
 Moreover, in a subset of cases the model was originally consistently biased in favour of a group, and became biased against it following the debiasing intervention. For example, for scenario number 33 (scholarship), GPT's responses were more positive for male applicants for each of the four race categories (mean difference between male and female applicants = `r scenario_33%>%filter(model=='GPT')%>%pull(default_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='GPT')%>%pull(default_bias_se)%>%printnum()`), but turned consistently biased against male applicants when it attempted to estimate its decision had it not known the gender and race of the candidate (mean difference = `r scenario_33%>%filter(model=='GPT')%>%pull(response_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='GPT')%>%pull(response_bias_se)%>%printnum()`). Qwen showed the opposite effect for the same scenario: consistently favouring female applicants in the default case (mean difference = `r scenario_33%>%filter(model=='Qwen')%>%pull(default_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='Qwen')%>%pull(default_bias_se)%>%printnum()`) and systematically discriminating against them when instructed not to discriminate (mean difference = `r scenario_33%>%filter(model=='Qwen')%>%pull(response_bias_mean)%>%printnum()`, SE=`r scenario_33%>%filter(model=='Qwen')%>%pull(response_bias_se)%>%printnum()`). 
 
 ```{r mean response}
-Qwen.Bias.average_response_by_prompt <- Qwen.Bias.response_by_prompt %>%
-  group_by(prompt, vignette) %>%
-  summarise(response=mean(response), removed_response=mean(removed_response)) %>%
+all_bias_average_response_by_prompt <- all_bias_response_by_prompt %>%
+  group_by(model, prompt, vignette) %>%
+  summarise(response=mean(response), removed_response=mean(removed_response),
+            .groups = "drop") %>%
   mutate(diff=response-removed_response)
 
-GPT.Bias.average_response_by_prompt <- GPT.Bias.response_by_prompt %>%
-  group_by(prompt, vignette) %>%
-  summarise(response=mean(response), removed_response=mean(removed_response)) %>%
-  mutate(diff=response-removed_response)
+# Backwards-compat aliases for the paper prose
+Qwen.Bias.average_response_by_prompt <- all_bias_average_response_by_prompt %>%
+  filter(model == "Qwen")
+GPT.Bias.average_response_by_prompt <- all_bias_average_response_by_prompt %>%
+  filter(model == "GPT")
 ```
 
 Access to race and gender information also had an effect on the average model response, that is, on the marginal probability of an affirmative answer, an effect that was especially strong for scenarios in which the model tended to produce a negative response when blind to race and gender. On average, Qwen's responses were significantly more positive compared to the blinded condition when the model was given race and gender information without any intervention (`r apa_print(Qwen.Bias.average_response_by_prompt%>%filter(prompt=='default')%>%pull(diff)%>%t.test())$statistic`), when instructed not to discriminate (`r apa_print(Qwen.Bias.average_response_by_prompt%>%filter(prompt=='dont_discriminate')%>%pull(diff)%>%t.test())$statistic`), and when instructed to estimate what decision it would have made had it not known the gender and race of the individual in question (`r apa_print(Qwen.Bias.average_response_by_prompt%>%filter(prompt=='if_you_didnt_know')%>%pull(diff)%>%t.test())$statistic`). Both models were more positive when instructed to ignore race and gender information (Qwen: `r apa_print(Qwen.Bias.average_response_by_prompt%>%filter(prompt=='ignore')%>%pull(diff)%>%t.test())$statistic`; GPT: `r apa_print(GPT.Bias.average_response_by_prompt%>%filter(prompt=='ignore')%>%pull(diff)%>%t.test())$statistic`). In sum, while debiasing interventions mostly reduced gender and race biases, they systematically made the model's responses less similar to its responses when truly blind to gender and race information, and often changed its overall tendency to produce a "yes" response. 

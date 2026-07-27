@@ -1,0 +1,528 @@
+---
+title: "analysis 6: cross-model default vs. self-call barplots"
+output: word_document
+date: "2026-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r load data}
+source("helpers.R")
+
+# Original (raw default-prompt) mean absolute difference from blindness, per model.
+all_bias <- load_bias_data()
+original_default <- all_bias %>%
+  with_baseline() %>%
+  summarize_bias() %>%
+  filter(prompt == "default") %>%
+  select(model, mean_abs_diff, se_abs_diff)
+
+# Marginal (self-call-blinded) response per trial, then aggregated to one row
+# per model. Replicates the construction in analysis_4_marginal_tool_use.Rmd
+# (lines 62-88 and 255-268), restricted to the default prompt.
+combined_resp_df <- load_tool_response_data() %>% pivot_conditional_logits()
+
+combined_yn_df <- all_bias %>%
+  select(model, vignette, race, gender, prompt, response)
+
+combined_full_df <- combined_resp_df %>%
+  filter(
+    tool_desc == "run counterfactual simulation",
+    as.character(prompt) %in% c("ignore", "if_you_didnt_know", "dont_discriminate", "default")
+  ) %>%
+  mutate(after_self_call_response = yes_logit - no_logit) %>%
+  select(model, vignette, race, gender, prompt, model_response, after_self_call_response) %>%
+  merge(combined_yn_df, by = c("model", "vignette", "race", "gender", "prompt"))
+
+removed_pyes_df <- combined_yn_df %>%
+  filter(prompt == "removed") %>%
+  mutate(removed_pyes = exp(response) / (1 + exp(response))) %>%
+  select(model, vignette, race, gender, removed_pyes)
+
+included_pyes_df <- combined_full_df %>%
+  mutate(after_self_call_pyes = exp(after_self_call_response) / (1 + exp(after_self_call_response))) %>%
+  select(model, vignette, race, gender, prompt, model_response, after_self_call_pyes)
+
+marginal_response_data <- removed_pyes_df %>%
+  merge(included_pyes_df) %>%
+  group_by(model, vignette, race, gender, prompt) %>%
+  summarise(
+    removed_pyes = first(removed_pyes),
+    after_self_call_yes = after_self_call_pyes[model_response == "Yes"][1],
+    after_self_call_no  = after_self_call_pyes[model_response == "No"][1],
+    marginal_pyes = removed_pyes * after_self_call_yes + (1 - removed_pyes) * after_self_call_no,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    marginal_response = log(marginal_pyes) - log(1 - marginal_pyes),
+    removed_response  = log(removed_pyes)  - log(1 - removed_pyes)
+  )
+
+marginal_default <- marginal_response_data %>%
+  filter(prompt == "default",
+         is.finite(marginal_response),
+         is.finite(removed_response)) %>%
+  mutate(abs_diff = abs(marginal_response - removed_response)) %>%
+  group_by(model) %>%
+  summarise(
+    mean_abs_diff = mean(abs_diff),
+    se_abs_diff   = sd(abs_diff) / sqrt(n()),
+    .groups = "drop"
+  )
+```
+
+```{r order models}
+# Family-then-size ordering. Llama-3.1 and Llama-3.2 are interleaved as a single
+# Llama-3 group sorted by size (so e.g. Llama-3.2-1B, Llama-3.2-3B, Llama-3.1-8B,
+# Llama-3.1-70B). NA size goes last within a family. To drop the Qwen2.5-7B
+# reproduction row, uncomment the filter below.
+family_group_levels <- c("Qwen2.5", "Qwen3", "Llama-3",
+                         "Gemma-4", "GPT", "Gemini-2.5", "DeepSeek")
+
+# Display labels: drop "Qwen" / "GPT" nicknames in favour of size-suffixed names,
+# and force the "-Instruct" suffix on Qwen2.5 entries so readers don't mistake
+# them for the pretrained base models.
+display_label <- function(nickname, family, size_b) {
+  case_when(
+    nickname == "Qwen"        ~ "Qwen2.5-7B-Instruct",
+    nickname == "GPT"         ~ "GPT-4.1",
+    family   == "Qwen2.5"     ~ paste0(nickname, "-Instruct"),
+    TRUE                      ~ nickname
+  )
+}
+
+model_meta <- models_df %>%
+  filter(nickname != "Qwen2.5-7B-rep") %>%
+  # Qwen3-30B-A3B: MoE with degenerate after-self-call conditional logits
+  # (no finite marginal data for any prompt), so its black bars are uninformative.
+  filter(nickname != "Qwen3-30B-A3B") %>%
+  filter(nickname %in% original_default$model) %>%
+  mutate(
+    family_group = if_else(family %in% c("Llama-3.1", "Llama-3.2"),
+                           "Llama-3", family),
+    family_group = factor(family_group, levels = family_group_levels),
+    # Manual capability ordering for the Gemini variants (which have NA size).
+    capability_rank = case_when(
+      nickname == "Gemini-2.5-Flash-Lite" ~ 1,
+      nickname == "Gemini-2.5-Flash"      ~ 2,
+      nickname == "Gemini-2.5-Pro"        ~ 3,
+      TRUE                                ~ NA_real_
+    ),
+    label = display_label(nickname, family, size_b)
+  ) %>%
+  arrange(family_group, is.na(size_b), size_b, capability_rank, nickname)
+
+model_order <- model_meta$nickname
+label_order <- model_meta$label
+
+relabel <- function(df) {
+  df %>%
+    filter(model %in% model_order) %>%
+    mutate(model = factor(model_meta$label[match(model, model_meta$nickname)],
+                          levels = label_order))
+}
+
+original_default <- relabel(original_default)
+marginal_default <- relabel(marginal_default)
+```
+
+```{r plot, fig.width=7, fig.height=7}
+# Combine into long form so a single fill scale gives us a real ggplot legend.
+# Order matters for draw order: "Default" rows first so "Blinded via self-call"
+# is drawn over the gray bars.
+plot_df <- bind_rows(
+  original_default %>% mutate(type = "Default"),
+  marginal_default %>% mutate(type = "Blinded via self-call")
+) %>%
+  mutate(type = factor(type, levels = c("Default", "Blinded via self-call")))
+
+fill_values <- c("Default" = "gray70", "Blinded via self-call" = "black")
+
+y_max <- max(plot_df$mean_abs_diff + plot_df$se_abs_diff, na.rm = TRUE) * 1.05
+
+p <- ggplot(plot_df, aes(x = model, y = mean_abs_diff, fill = type)) +
+  geom_bar(stat = "identity", width = 0.75, position = "identity") +
+  geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff,
+                    color = type),
+                width = 0.25, linewidth = 0.5,
+                position = position_identity(),
+                show.legend = FALSE) +
+  scale_fill_manual(values = fill_values, name = NULL) +
+  scale_color_manual(values = c("Default" = "gray30",
+                                "Blinded via self-call" = "black")) +
+  scale_x_discrete(limits = rev(levels(plot_df$model))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.02)),
+                     limits = c(0, y_max)) +
+  labs(x = NULL, y = "mean absolute difference from true blindness") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    legend.position = c(0.97, 0.98),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key.size = unit(0.5, "lines"),
+    legend.text = element_text(size = 9),
+    plot.margin = margin(t = 8, r = 12, b = 6, l = 6)
+  )
+
+print(p)
+
+out_dir <- "figures/demographic_bias"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+ggsave(file.path(out_dir, "cross_model_default_selfcall_barplot.png"),
+       plot = p, height = 7, width = 7, dpi = 300)
+ggsave(file.path(out_dir, "cross_model_default_selfcall_barplot.pdf"),
+       plot = p, height = 7, width = 7)
+```
+
+```{r print values}
+# Sanity-check table: per-model gray and black values side by side.
+original_default %>%
+  rename(default_mean_abs_diff = mean_abs_diff,
+         default_se = se_abs_diff) %>%
+  full_join(
+    marginal_default %>%
+      rename(marginal_mean_abs_diff = mean_abs_diff,
+             marginal_se = se_abs_diff),
+    by = "model"
+  ) %>%
+  arrange(model) %>%
+  print(n = Inf)
+```
+
+```{r five-bar data}
+# Raw mean_abs_diff per (model, prompt) for the four interventions for which
+# self-call (blinded) data was actually collected. remove_in_context is excluded
+# because no self-blinding experiment was run on top of an already-stripped
+# context (it would be redundant), so the conditional-logit columns for it are
+# pipeline artifacts rather than real self-call observations.
+prompts_keep <- c("default", "dont_discriminate", "ignore",
+                  "if_you_didnt_know")
+
+original_all <- all_bias %>%
+  with_baseline() %>%
+  summarize_bias() %>%
+  filter(prompt %in% prompts_keep) %>%
+  mutate(prompt = as.character(prompt)) %>%
+  select(model, prompt, mean_abs_diff, se_abs_diff)
+
+# Marginal/self-call mean_abs_diff per (model, prompt) for all five.
+marginal_all <- marginal_response_data %>%
+  filter(prompt %in% prompts_keep,
+         is.finite(marginal_response),
+         is.finite(removed_response)) %>%
+  mutate(abs_diff = abs(marginal_response - removed_response),
+         prompt = as.character(prompt)) %>%
+  group_by(model, prompt) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            se_abs_diff   = sd(abs_diff) / sqrt(n()),
+            .groups = "drop")
+```
+
+```{r five-bar plot, fig.width=8, fig.height=12}
+prompt_levels <- c("default", "dont_discriminate",
+                   "ignore", "if_you_didnt_know")
+prompt_colors <- c(
+  default            = "gray70",
+  ignore             = "#4DAF4A",
+  dont_discriminate  = "#377EB8",
+  if_you_didnt_know  = "#984EA3"
+)
+prompt_labels <- c(
+  default            = "Default",
+  ignore             = "Ignore",
+  dont_discriminate  = "Don't Discriminate",
+  if_you_didnt_know  = "If You Didn't Know"
+)
+
+# Apply the same model relabel/ordering as the one-bar figure.
+relabel_keep <- function(df) {
+  df %>%
+    filter(model %in% model_order) %>%
+    mutate(model = factor(model_meta$label[match(model, model_meta$nickname)],
+                          levels = label_order),
+           prompt = factor(prompt, levels = prompt_levels))
+}
+
+original_all_lab <- relabel_keep(original_all)
+marginal_all_lab <- relabel_keep(marginal_all)
+
+# Bar geometry: 5 prompts dodged within a model slot.
+# - Each model row spans 1 unit on the (pre-flip) x axis.
+# - position_dodge(width = dodge_w) leaves 1 - dodge_w between models.
+# - Bar width = dodge_w / 5 * overlap_factor: factor > 1 makes adjacent bars
+#   within a model overlap slightly so there are no hairline gaps from
+#   anti-aliasing or rounding.
+dodge_w  <- 0.85
+overlap  <- 1.10
+bar_w    <- dodge_w / length(prompt_levels) * overlap
+
+y_max5 <- max(c(original_all_lab$mean_abs_diff + original_all_lab$se_abs_diff,
+                marginal_all_lab$mean_abs_diff + marginal_all_lab$se_abs_diff),
+              na.rm = TRUE) * 1.05
+
+# Compute explicit numeric positions for each (model, prompt) bar so the
+# layout is exact: bars touch within a model, gap between models.
+n_prompts <- length(prompt_levels)
+slot_w    <- 1 - (1 - dodge_w)        # width of the bar block within a model slot
+bar_step  <- slot_w / n_prompts        # center-to-center spacing within a model
+
+position_lookup <- tibble(
+  prompt = factor(prompt_levels, levels = prompt_levels),
+  prompt_offset = (seq_len(n_prompts) - (n_prompts + 1) / 2) * bar_step
+)
+
+original_pos <- original_all_lab %>%
+  mutate(model_pos = as.numeric(model)) %>%
+  left_join(position_lookup, by = "prompt") %>%
+  mutate(x_pos = model_pos + prompt_offset)
+
+marginal_pos <- expand_grid(
+  model  = factor(label_order, levels = label_order),
+  prompt = factor(prompt_levels, levels = prompt_levels)
+) %>%
+  left_join(marginal_all_lab, by = c("model", "prompt")) %>%
+  mutate(model_pos = as.numeric(model)) %>%
+  left_join(position_lookup, by = "prompt") %>%
+  mutate(x_pos = model_pos + prompt_offset)
+
+# Bar width slightly exceeds bar_step to ensure no hairline gaps.
+bar_w <- bar_step * 1.02
+
+p5 <- ggplot(original_pos,
+             aes(x = x_pos, y = mean_abs_diff, fill = prompt)) +
+  geom_col(width = bar_w, color = NA, linewidth = 0) +
+  geom_col(data = marginal_pos,
+           aes(x = x_pos, y = mean_abs_diff),
+           width = bar_w, fill = "black",
+           color = NA, linewidth = 0,
+           inherit.aes = FALSE,
+           na.rm = TRUE) +
+  geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = bar_w * 0.6, linewidth = 0.3,
+                color = "gray30") +
+  geom_errorbar(data = marginal_pos,
+                aes(x = x_pos,
+                    ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = bar_w * 0.6, linewidth = 0.3,
+                color = "black",
+                inherit.aes = FALSE,
+                na.rm = TRUE) +
+  scale_fill_manual(values = prompt_colors, labels = prompt_labels,
+                    breaks = c("default", "dont_discriminate", "ignore",
+                               "if_you_didnt_know"),
+                    name = NULL) +
+  scale_x_continuous(breaks = seq_along(label_order),
+                     labels = label_order,
+                     trans = "reverse",
+                     expand = expansion(add = 0.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.02)),
+                     limits = c(0, y_max5)) +
+  labs(x = NULL, y = "mean absolute difference from true blindness") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    legend.position = "top",
+    legend.justification = "right",
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key.size = unit(0.7, "lines"),
+    legend.text = element_text(size = 9),
+    legend.margin = margin(b = -2),
+    plot.margin = margin(t = 4, r = 12, b = 6, l = 6)
+  ) +
+  guides(fill = guide_legend(nrow = 1, reverse = FALSE))
+
+print(p5)
+
+ggsave(file.path(out_dir, "cross_model_four_interventions_barplot.png"),
+       plot = p5, height = 12, width = 8, dpi = 300)
+ggsave(file.path(out_dir, "cross_model_four_interventions_barplot.pdf"),
+       plot = p5, height = 12, width = 8)
+```
+
+# Sycophancy
+
+```{r load sycophancy}
+source("loadAndFormatSycophancyData.R")
+# combined_sycophancy is now in scope: per-(model, scenario_id, my_version, prompt)
+# rows with `response`, `removed_response`, `marginal_response`.
+```
+
+```{r sycophancy data}
+syc_prompts <- c("Default", "Don't Be Sycophantic", "Ignore", "If You Didn't Know")
+
+original_syc <- combined_sycophancy %>%
+  filter(prompt %in% syc_prompts,
+         is.finite(response), is.finite(removed_response)) %>%
+  mutate(abs_diff = abs(response - removed_response),
+         prompt = as.character(prompt)) %>%
+  group_by(model, prompt) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            se_abs_diff   = sd(abs_diff) / sqrt(n()),
+            .groups = "drop")
+
+marginal_syc <- combined_sycophancy %>%
+  filter(prompt %in% syc_prompts,
+         is.finite(marginal_response), is.finite(removed_response)) %>%
+  mutate(abs_diff = abs(marginal_response - removed_response),
+         prompt = as.character(prompt)) %>%
+  group_by(model, prompt) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            se_abs_diff   = sd(abs_diff) / sqrt(n()),
+            .groups = "drop")
+```
+
+```{r sycophancy ordering}
+# Use exactly the same model list as the demographic-bias figure so the two
+# figures are directly comparable (excludes DeepSeek, which has sycophancy
+# data but no demographic-bias data).
+model_meta_syc <- models_df %>%
+  filter(nickname != "Qwen2.5-7B-rep") %>%
+  filter(nickname != "Qwen3-30B-A3B") %>%
+  filter(nickname %in% model_order,
+         nickname %in% original_syc$model) %>%
+  mutate(
+    family_group = if_else(family %in% c("Llama-3.1", "Llama-3.2"),
+                           "Llama-3", family),
+    family_group = factor(family_group, levels = family_group_levels),
+    capability_rank = case_when(
+      nickname == "Gemini-2.5-Flash-Lite" ~ 1,
+      nickname == "Gemini-2.5-Flash"      ~ 2,
+      nickname == "Gemini-2.5-Pro"        ~ 3,
+      TRUE                                ~ NA_real_
+    ),
+    label = display_label(nickname, family, size_b)
+  ) %>%
+  arrange(family_group, is.na(size_b), size_b, capability_rank, nickname)
+
+model_order_syc <- model_meta_syc$nickname
+label_order_syc <- model_meta_syc$label
+
+relabel_syc <- function(df) {
+  df %>%
+    filter(model %in% model_order_syc) %>%
+    mutate(model = factor(model_meta_syc$label[match(model, model_meta_syc$nickname)],
+                          levels = label_order_syc),
+           prompt = factor(prompt, levels = syc_prompt_levels))
+}
+```
+
+```{r sycophancy plot, fig.width=8, fig.height=12}
+syc_prompt_levels <- c("Default", "Don't Be Sycophantic",
+                       "Ignore", "If You Didn't Know")
+syc_prompt_colors <- c(
+  "Default"              = "gray70",
+  "Ignore"               = "#4DAF4A",
+  "Don't Be Sycophantic" = "#377EB8",
+  "If You Didn't Know"   = "#984EA3"
+)
+
+original_syc_lab <- relabel_syc(original_syc)
+marginal_syc_lab <- relabel_syc(marginal_syc)
+
+n_prompts_syc <- length(syc_prompt_levels)
+slot_w_syc    <- 1 - (1 - dodge_w)
+bar_step_syc  <- slot_w_syc / n_prompts_syc
+bar_w_syc     <- bar_step_syc * 1.02
+
+position_lookup_syc <- tibble(
+  prompt = factor(syc_prompt_levels, levels = syc_prompt_levels),
+  prompt_offset = (seq_len(n_prompts_syc) - (n_prompts_syc + 1) / 2) * bar_step_syc
+)
+
+original_syc_pos <- original_syc_lab %>%
+  mutate(model_pos = as.numeric(model)) %>%
+  left_join(position_lookup_syc, by = "prompt") %>%
+  mutate(x_pos = model_pos + prompt_offset)
+
+marginal_syc_pos <- expand_grid(
+  model  = factor(label_order_syc, levels = label_order_syc),
+  prompt = factor(syc_prompt_levels, levels = syc_prompt_levels)
+) %>%
+  left_join(marginal_syc_lab, by = c("model", "prompt")) %>%
+  mutate(model_pos = as.numeric(model)) %>%
+  left_join(position_lookup_syc, by = "prompt") %>%
+  mutate(x_pos = model_pos + prompt_offset)
+
+y_max_syc <- max(c(original_syc_lab$mean_abs_diff + original_syc_lab$se_abs_diff,
+                   marginal_syc_lab$mean_abs_diff + marginal_syc_lab$se_abs_diff),
+                 na.rm = TRUE) * 1.05
+
+p_syc <- ggplot(original_syc_pos,
+                aes(x = x_pos, y = mean_abs_diff, fill = prompt)) +
+  geom_col(width = bar_w_syc, color = NA, linewidth = 0) +
+  geom_col(data = marginal_syc_pos,
+           aes(x = x_pos, y = mean_abs_diff),
+           width = bar_w_syc, fill = "black",
+           color = NA, linewidth = 0,
+           inherit.aes = FALSE,
+           na.rm = TRUE) +
+  geom_errorbar(aes(ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = bar_w_syc * 0.6, linewidth = 0.3,
+                color = "gray30") +
+  geom_errorbar(data = marginal_syc_pos,
+                aes(x = x_pos,
+                    ymin = mean_abs_diff - se_abs_diff,
+                    ymax = mean_abs_diff + se_abs_diff),
+                width = bar_w_syc * 0.6, linewidth = 0.3,
+                color = "black",
+                inherit.aes = FALSE,
+                na.rm = TRUE) +
+  scale_fill_manual(values = syc_prompt_colors,
+                    breaks = c("Default", "Don't Be Sycophantic",
+                               "Ignore", "If You Didn't Know"),
+                    name = NULL) +
+  scale_x_continuous(breaks = seq_along(label_order_syc),
+                     labels = label_order_syc,
+                     trans = "reverse",
+                     expand = expansion(add = 0.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.02)),
+                     limits = c(0, y_max_syc)) +
+  labs(x = NULL, y = "mean absolute sycophancy") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    legend.position = "top",
+    legend.justification = "right",
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key.size = unit(0.7, "lines"),
+    legend.text = element_text(size = 9),
+    legend.margin = margin(b = -2),
+    plot.margin = margin(t = 4, r = 12, b = 6, l = 6)
+  ) +
+  guides(fill = guide_legend(nrow = 1, reverse = FALSE))
+
+print(p_syc)
+
+syc_dir <- "figures/sycophancy"
+dir.create(syc_dir, recursive = TRUE, showWarnings = FALSE)
+ggsave(file.path(syc_dir, "cross_model_four_interventions_barplot.png"),
+       plot = p_syc, height = 12, width = 8, dpi = 300)
+ggsave(file.path(syc_dir, "cross_model_four_interventions_barplot.pdf"),
+       plot = p_syc, height = 12, width = 8)
+```

@@ -118,18 +118,24 @@ def resolve_file_paths(model: str, data_path: str | None) -> dict[str, str]:
         chosen = next((c for c in candidates if c.exists()), None)
 
         # Fall back to globs for timestamped inference output (e.g.
-        # 20260429_123456_sycophancy_first_person_Qwen3-8B.jsonl)
+        # 20260429_123456_sycophancy_first_person_Qwen3-8B.jsonl).
+        # IMPORTANT: every glob must require the model nickname in the filename;
+        # without this, multi-model results folders pick up the wrong model.
         if chosen is None:
             token = inference_token[file_type]
             globs = [
                 f"*sycophancy_{token}_{model}_aggregated.jsonl",
                 f"*sycophancy_{token}_{model}*.jsonl",
-                f"*sycophancy_{token}*.jsonl",
+                # Catch the `_tool_use_probs_<model>` alias filenames where the
+                # token doesn't directly precede the model nickname.
+                f"*sycophancy_{token}*{model}*.jsonl",
             ]
             for pat in globs:
                 matches = sorted(folder.glob(pat))
+                # Defense in depth: filter by model name explicitly in case the
+                # glob is too loose.
+                matches = [m for m in matches if model in m.name]
                 if matches:
-                    # Prefer aggregated if multiple
                     aggregated = [m for m in matches if "aggregated" in m.name]
                     chosen = aggregated[-1] if aggregated else matches[-1]
                     break
@@ -390,9 +396,20 @@ def process_tool_use_probs(df: pd.DataFrame, is_gpt: bool) -> pd.DataFrame:
     elif is_gpt:
         # Local GPT format: boolean column needs no transformation - will be aggregated later
         df["tool_use_prob"] = df[f"made_tool_call__{INCLUDED_TOOL}"].astype(float)
-    else:
-        # Qwen has direct probability
+    elif f"tool_prob__{INCLUDED_TOOL}" in df.columns:
+        # Qwen / HF inference: direct probability
         df["tool_use_prob"] = df[f"tool_prob__{INCLUDED_TOOL}"]
+    elif f"made_tool_call__{INCLUDED_TOOL}" in df.columns:
+        # Sync-call inference (e.g. Vertex Gemini scripts): only boolean is available;
+        # treat each row's boolean as a 0/1 "probability" — aggregation downstream
+        # converts these to the call rate.
+        df["tool_use_prob"] = df[f"made_tool_call__{INCLUDED_TOOL}"].astype(float)
+    else:
+        raise KeyError(
+            f"No usable tool-use column in tool_use_probs data. "
+            f"Looked for tool_call_rate, made_tool_call__{INCLUDED_TOOL}, "
+            f"tool_prob__{INCLUDED_TOOL}."
+        )
 
     return df
 
