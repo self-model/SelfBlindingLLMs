@@ -182,3 +182,32 @@ Qwen/Qwen3-30B-A3B:
   num_gpus: 1
   tool_use_start_token_id: 151657
   thinking_family: qwen3
+
+# Qwen 3.8. New tokenizer relative to Qwen3: <tool_call> moved from 151657
+# to 248058, </think> from 151668 to 248069.
+#
+# Tool-call body format changed from Qwen2.5/Qwen3's JSON to XML:
+#   <tool_call>\n<function=NAME>\n<parameter=X>value</parameter>\n</function>\n</tool_call>
+# Doesn't affect our next-token-probability measurement — we only care about
+# the probability mass on the leading <tool_call> token (same convention as
+# the Llama JSON-shape note above).
+#
+# thinking_family: qwen3 verified for the OFF path (renders structurally
+# identical to Qwen3: empty <think>\n\n</think> injection on both
+# add_generation_prompt and continue_final_message). CAUTION for thinking-ON:
+# the Qwen3.8 chat template injects a reasoning system prompt when
+# enable_thinking=True (and pre-opens <think>, unlike Qwen3). The qwen3
+# adapter handles it mechanically, but on-vs-off then differs in system
+# prompt content.
+#
+# Hybrid/linear-attention architecture: install flash-linear-attention and
+# causal-conv1d in the Colab setup cell or transformers falls back to a
+# slower pure-torch path.
+# causal-conv1d needs `pip install causal-conv1d --no-build-isolation` (its
+# setup.py imports torch, which pip's isolated build env lacks) — the sweep
+# notebook's install cell does this.
+Qwen/Qwen3.8-27B:
+  dtype: bfloat16
+  num_gpus: 1
+  tool_use_start_token_id: 248058
+  thinking_family: qwen3

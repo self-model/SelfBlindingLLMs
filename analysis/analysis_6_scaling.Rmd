@@ -49,10 +49,11 @@ tool_for_scaling <- all_tool_calls %>%
   attach_registry()
 
 # Family color palette (assign distinct colors per family)
-family_levels <- c("Qwen2.5", "Qwen3", "Llama-3.1", "Llama-3.2", "Gemma-4", "GPT", "DeepSeek", "Gemini-2.5")
+family_levels <- c("Qwen2.5", "Qwen3", "Qwen3.8", "Llama-3.1", "Llama-3.2", "Gemma-4", "GPT", "DeepSeek", "Gemini-2.5")
 family_colors <- c(
   "Qwen2.5" = "#1F77B4",
   "Qwen3" = "#17BECF",
+  "Qwen3.8" = "#9EDAE5",
   "Llama-3.1" = "#D62728",
   "Llama-3.2" = "#FF9896",
   "Gemma-4" = "#2CA02C",
