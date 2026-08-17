@@ -273,7 +273,7 @@ def create_tool_call(tool_name: str, arguments: dict) -> dict:
             "type": "function",
             "function": {
                 "name": tool_name,
-                "arguments": json.dumps(arguments)
+                "arguments": arguments
             }
         }]
     }
